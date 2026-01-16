@@ -28,7 +28,7 @@ def load_model():
 
 
 # Devolver la celda de la grilla más cercana al punto lon/lat del usuario
-def get_nearest_cell(grilla: gpd.GeoDataFrame, lon: float, lat: float):
+def get_nearest_cell(grilla: gpd.GeoDataFrame, lon: float, lat: float, max_distance_m=20000):
     point = Point(lon, lat)
 
     # Aseguramos mismo CRS
@@ -41,12 +41,19 @@ def get_nearest_cell(grilla: gpd.GeoDataFrame, lon: float, lat: float):
 
     distances = grilla_proj.geometry.distance(point_proj)
     idx = distances.idxmin()
+    min_dist=distances.loc[idx]
+
+    if min_dist > max_distance_m:
+        return None
 
     return grilla.loc[idx]
 
 
 # Extraer variables ambientales de la celda
 def extract_environmental_variables(cell: pd.Series, feature_names: list):
+    missing = [v for v in feature_names if v not in cell.index]
+    if missing:
+        raise ValueError(f"Faltan variables en la celda: {missing}")
     return {var: cell[var] for var in feature_names}
 
 
@@ -60,11 +67,16 @@ def predict_microplastics_at_point(
 ):
     # 1. Buscar celda más cercana
     cell = get_nearest_cell(grilla, lon, lat)
+    if cell is None:
+        return {
+            "status": "land",
+            "message": "El punto seleccionado está en tierra o fuera del dominio oceánico."
+        }
 
     # 2. Extraer variables ambientales
     env_vars = extract_environmental_variables(cell, feature_names)
 
-    X = pd.DataFrame([env_vars])
+    X = pd.DataFrame([env_vars], columns=feature_names)
 
     # 3. Predicción en escala log
     mp_log = float(model.predict(X)[0])
@@ -73,7 +85,9 @@ def predict_microplastics_at_point(
     mp_real = float(np.expm1(mp_log))
 
     return {
+        "status": "water",
         "microplastics_log": mp_log,
         "microplastics_real": mp_real,
-        "environmental_variables": env_vars
+        "environmental_variables": env_vars,
+        "cell_index": cell.name
     }
