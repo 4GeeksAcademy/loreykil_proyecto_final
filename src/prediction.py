@@ -16,7 +16,7 @@ from shapely.geometry import Point
 
 # RUTAS
 GRILLA_PATH = "./data/grid_ocean/grilla_agua.gpkg"
-MODEL_PATH = "./model/rf_microplastics_final.joblib"
+MODEL_PATH = "./models/Grilla_mp/rf_microplastics_final.joblib"
 
 
 # Cargar recursos
@@ -28,7 +28,7 @@ def load_model():
 
 
 # Devolver la celda de la grilla más cercana al punto lon/lat del usuario
-def get_nearest_cell(grilla: gpd.GeoDataFrame, lon: float, lat: float, max_distance_m=20000):
+def get_nearest_cell(grilla: gpd.GeoDataFrame, lon: float, lat: float, max_distance_m=50000):
     point = Point(lon, lat)
 
     # Aseguramos mismo CRS
@@ -56,6 +56,9 @@ def extract_environmental_variables(cell: pd.Series, feature_names: list):
         raise ValueError(f"Faltan variables en la celda: {missing}")
     return {var: cell[var] for var in feature_names}
 
+# status:
+# - "water": predicción válida
+# - "land": punto fuera del dominio oceánico
 
 # Predicción de microplásticos en un punto
 def predict_microplastics_at_point(
