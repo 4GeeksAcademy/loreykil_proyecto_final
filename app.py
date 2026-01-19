@@ -6,6 +6,8 @@ import branca.colormap as cm
 from streamlit_folium import st_folium
 import folium
 import plotly.graph_objects as go
+from shapely.geometry import Point
+
 from src.prediction import (
     load_grilla,
     load_model,
@@ -71,13 +73,30 @@ FEATURES = ['temperature', 'salinity', 'chlorophyll', 'nitrate',
 
 st.header("Selección espacial")
 
+def get_ocean_profile_at_point(gdf_continuo, lon, lat):
+    point = Point(lon, lat)
+
+    # Asegurar CRS coherente para distancias
+    if gdf_continuo.crs.is_geographic:
+        gdf_proj = gdf_continuo.to_crs(epsg=3857)
+        point_proj = gpd.GeoSeries([point], crs=4326).to_crs(epsg=3857).iloc[0]
+    else:
+        gdf_proj = gdf_continuo
+        point_proj = point
+
+    distances = gdf_proj.geometry.distance(point_proj)
+    idx = distances.idxmin()
+
+    return gdf_continuo.loc[idx, "profile_eco"]
+
 @st.cache_resource
 def build_map(_gdf_continuo):
     # Mapa base (centrado global)
     m = folium.Map(
         location=[0, 0],
         zoom_start=2,
-        tiles="Stamen Toner Lite"
+        tiles="https://stamen-tiles.a.ssl.fastly.net/toner-lite/{z}/{x}/{y}.png",
+        attr="Map tiles by Stamen Design, CC BY 3.0 — Data © OpenStreetMap contributors"
     )
     # Colormap
     vmin = _gdf_continuo["microplastics_log_est"].min()
@@ -142,7 +161,16 @@ if map_data and map_data.get("last_clicked"):
         st.session_state.mp_real = result["microplastics_real"]
 
         st.subheader("Variables ambientales asociadas")
-        st.json(result["environmental_variables"])
+        # Extraer perfil oceanográfico desde el mapa contínuo
+        ocean_profile = get_ocean_profile_at_point(
+            gdf_continuo,
+            lon=lon,
+            lat=lat
+        )
+        # Añadirlo como una variable más
+        env_vars = result['environmental_variables'].copy()
+        env_vars["ocean_profile"] = ocean_profile
+        st.json(env_vars)
 
         with st.expander("Ver valor en escala logarítmica"):
             st.write(f"{result['microplastics_log']:.3f}")
