@@ -69,6 +69,20 @@ MP_REF_P95 = np.percentile(mp_observed, 95)
 FEATURES = ['temperature', 'salinity', 'chlorophyll', 'nitrate',
             'phosphate', 'oxygen_dissolved', 'oxygen_utilization']
 
+
+RANGES = {
+    "temperature": (-2, 30),
+    "salinity": (5, 40),
+    "chlorophyll": (-1, 1),
+    "nitrate": (0, 37),
+    "phosphate": (0, 5),
+    "oxygen_dissolved": (30, 400),
+    "oxygen_utilization": (0, 300)
+}
+
+def normalize(value, vmin, vmax):
+    return max(0, min(1, (value - vmin) / (vmax - vmin)))
+
 # CAPA 1  - MAPA INTERACTIVO
 
 st.header("Selección espacial")
@@ -88,6 +102,39 @@ def get_ocean_profile_at_point(gdf_continuo, lon, lat):
     idx = distances.idxmin()
 
     return gdf_continuo.loc[idx, "profile_eco"]
+
+def plot_oceanographic_radar(env_vars):
+    labels = list(env_vars.keys())
+
+    values = [
+        normalize(env_vars[k], *RANGES[k])
+        for k in labels
+        if k in RANGES
+    ]
+
+    labels = labels + [labels[0]]
+    values = values + [values[0]]
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatterpolar(
+        r=values,
+        theta=labels,
+        fill='toself',
+        name='Perfil oceanográfico'
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 1]
+            )
+        ),
+        showlegend=False,
+        margin=dict(l=40, r=40, b=40)
+    )
+    return fig
 
 @st.cache_resource
 def build_map(_gdf_continuo):
@@ -169,7 +216,13 @@ if map_data and map_data.get("last_clicked"):
         # Añadirlo como una variable más
         env_vars = result['environmental_variables'].copy()
         env_vars["ocean_profile"] = ocean_profile
-        st.json(env_vars)
+        fig = plot_oceanographic_radar(
+            {k: v for k, v in env_vars.items() if k in FEATURES}
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("Ver valores numéricos"):
+            st.json(env_vars)
 
         with st.expander("Ver valor en escala logarítmica"):
             st.write(f"{result['microplastics_log']:.3f}")
