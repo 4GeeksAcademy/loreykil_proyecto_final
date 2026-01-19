@@ -1,4 +1,6 @@
 import streamlit as st
+import geopandas as gpd
+import branca.colormap as cm
 from streamlit_folium import st_folium
 import folium
 from src.prediction import (
@@ -30,8 +32,13 @@ def get_model():
 def get_grilla():
     return load_grilla()
 
+@st.cache_data
+def get_mapa_continuo():
+    return gpd.read_file("./data/Predicciones/mapa_continuo.gpkg")
+
 model = get_model()
 grilla = get_grilla()
+gdf_continuo = get_mapa_continuo()
 
 FEATURES = ['temperature', 'salinity', 'chlorophyll', 'nitrate',
             'phosphate', 'oxygen_dissolved', 'oxygen_utilization']
@@ -46,6 +53,30 @@ m = folium.Map(
     zoom_start=2,
     tiles="CartoDB positron"
 )
+# Colormap
+vmin = gdf_continuo["microplastics_log_est"].min()
+vmax = gdf_continuo["microplastics_log_est"].max()
+colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
+colormap.caption = "Concentración estimada de microplásticos (log items/m³)"
+
+# Subsample
+gdf_plot = gdf_continuo.sample(5000, random_state=42)
+
+# Overlay de microplásticos
+for _, row in gdf_plot.iterrows():
+    lat = row.geometry.y
+    lon = row.geometry.x
+    color = colormap(row["microplastics_log_est"])
+    folium.CircleMarker(
+        location=[lat, lon],
+        radius=5,
+        fill=True,
+        fill_color=color,
+        fill_opacity=0.6,
+    color=None
+    ).add_to(m)
+# Leyenda
+colormap.add_to(m)   
 
 # Render del mapa en Streamlit
 map_data = st_folium(
@@ -79,7 +110,7 @@ if map_data and map_data.get("last_clicked"):
         st.metric(
             label="Estimación",
             value=f"{result['microplastics_real']:.2f} items/m³"
-    )
+        )
 
         st.subheader("Variables ambientales asociadas")
         st.json(result["environmental_variables"])
@@ -88,9 +119,11 @@ if map_data and map_data.get("last_clicked"):
             st.write(f"{result['microplastics_log']:.3f}")
     
     elif result.get("status") == "land":
-        st.warning(result.get(("message")))
+        st.warning(result.get("message"))
         st.info("Por favor, selecciona un punto dentro del océano para obtener una predicción.")
-else:
-    st.error("Resultado inesperado.")
+    else:
+        st.error("Resultado inesperado.")
 
+else:
+    st.info("Haz clic en el mapa para seleccionar un punto del océano.")
 
