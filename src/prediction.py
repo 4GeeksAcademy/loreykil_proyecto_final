@@ -28,7 +28,7 @@ def load_model():
 
 
 # Devolver la celda de la grilla más cercana al punto lon/lat del usuario
-def get_nearest_cell(grilla: gpd.GeoDataFrame, lon: float, lat: float, max_distance_m=20000):
+def get_nearest_cell(grilla: gpd.GeoDataFrame, lon: float, lat: float, max_distance_m=50000):
     point = Point(lon, lat)
 
     # Aseguramos mismo CRS

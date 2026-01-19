@@ -95,8 +95,7 @@ def build_map(_gdf_continuo):
     m = folium.Map(
         location=[0, 0],
         zoom_start=2,
-        tiles="https://stamen-tiles.a.ssl.fastly.net/toner-lite/{z}/{x}/{y}.png",
-        attr="Map tiles by Stamen Design, CC BY 3.0 — Data © OpenStreetMap contributors"
+        tiles="CartoDB voyager"
     )
     # Colormap
     vmin = _gdf_continuo["microplastics_log_est"].min()
@@ -116,7 +115,7 @@ def build_map(_gdf_continuo):
             radius=5,
             fill=True,
             fill_color=color,
-            fill_opacity=0.6,
+            fill_opacity=0.8,
         color=None
         ).add_to(m)
     # Leyenda
