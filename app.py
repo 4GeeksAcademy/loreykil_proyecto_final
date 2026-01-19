@@ -83,6 +83,16 @@ RANGES = {
 def normalize(value, vmin, vmax):
     return max(0, min(1, (value - vmin) / (vmax - vmin)))
 
+st.cache_data
+def compute_profile_means(gdf_continuo, profile_col="profile_eco"):
+    return (
+        gdf_continuo
+        .groupby(profile_col)[FEATURES]
+        .mean()
+    )
+profile_means = compute_profile_means(gdf_continuo)
+
+
 # CAPA 1  - MAPA INTERACTIVO
 
 st.header("Selección espacial")
@@ -103,27 +113,42 @@ def get_ocean_profile_at_point(gdf_continuo, lon, lat):
 
     return gdf_continuo.loc[idx, "profile_eco"]
 
-def plot_oceanographic_radar(env_vars):
-    labels = list(env_vars.keys())
+def plot_oceanographic_radar(env_point, env_mean, profile_name):
+    labels = FEATURES
 
-    values = [
-        normalize(env_vars[k], *RANGES[k])
+    values_point = [
+        normalize(env_point[k], *RANGES[k])
         for k in labels
-        if k in RANGES
+    ]
+    values_mean = [
+        normalize(env_mean[k], *RANGES[k])
+        for k in labels
     ]
 
-    labels = labels + [labels[0]]
-    values = values + [values[0]]
+    # cerrar polígonos
+    labels_closed = labels + [labels[0]]
+    values_point += [values_point[0]]
+    values_mean += [values_mean[0]]
 
     fig = go.Figure()
 
+    # Perfil medio (sombreado)
     fig.add_trace(go.Scatterpolar(
-        r=values,
-        theta=labels,
+        r=values_mean,
+        theta=labels_closed,
         fill='toself',
-        name='Perfil oceanográfico'
+        name='Perfil oceanográfico ({profile_name})'
     ))
 
+    # Punto seleccionado (línea)
+    fig.add_trace(go.Scatterpolar(
+        r=values_point,
+        theta=labels_closed,
+        fill=None,
+        line=dict(width=3),
+        name="Punto seleccionado"
+    ))
+    
     fig.update_layout(
         polar=dict(
             radialaxis=dict(
@@ -216,8 +241,12 @@ if map_data and map_data.get("last_clicked"):
         # Añadirlo como una variable más
         env_vars = result['environmental_variables'].copy()
         env_vars["ocean_profile"] = ocean_profile
+        profile_name = ocean_profile
+        env_mean = profile_means.loc[profile_name].to_dict()
         fig = plot_oceanographic_radar(
-            {k: v for k, v in env_vars.items() if k in FEATURES}
+            env_point=env_vars,
+            env_mean=env_mean,
+            profile_name=profile_name
         )
         st.plotly_chart(fig, use_container_width=True)
 
