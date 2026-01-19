@@ -71,36 +71,40 @@ FEATURES = ['temperature', 'salinity', 'chlorophyll', 'nitrate',
 
 st.header("Selección espacial")
 
-# Mapa base (centrado global)
-m = folium.Map(
-    location=[0, 0],
-    zoom_start=2,
-    tiles="CartoDB positron"
-)
-# Colormap
-vmin = gdf_continuo["microplastics_log_est"].min()
-vmax = gdf_continuo["microplastics_log_est"].max()
-colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
-colormap.caption = "Concentración estimada de microplásticos (log items/m³)"
+@st.cache_resource
+def build_map(_gdf_continuo):
+    # Mapa base (centrado global)
+    m = folium.Map(
+        location=[0, 0],
+        zoom_start=2,
+        tiles="Stamen Toner Lite"
+    )
+    # Colormap
+    vmin = _gdf_continuo["microplastics_log_est"].min()
+    vmax = _gdf_continuo["microplastics_log_est"].max()
+    colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
+    colormap.caption = "Concentración estimada de microplásticos (log items/m³)"
+    # Subsample
+    gdf_plot = _gdf_continuo.sample(5000, random_state=42)
 
-# Subsample
-gdf_plot = gdf_continuo.sample(5000, random_state=42)
+    # Overlay de microplásticos
+    for _, row in gdf_plot.iterrows():
+        lat = row.geometry.y
+        lon = row.geometry.x
+        color = colormap(row["microplastics_log_est"])
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=5,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.6,
+        color=None
+        ).add_to(m)
+    # Leyenda
+    colormap.add_to(m)
+    return m
 
-# Overlay de microplásticos
-for _, row in gdf_plot.iterrows():
-    lat = row.geometry.y
-    lon = row.geometry.x
-    color = colormap(row["microplastics_log_est"])
-    folium.CircleMarker(
-        location=[lat, lon],
-        radius=5,
-        fill=True,
-        fill_color=color,
-        fill_opacity=0.6,
-    color=None
-    ).add_to(m)
-# Leyenda
-colormap.add_to(m)   
+m = build_map(gdf_continuo)
 
 # Render del mapa en Streamlit
 map_data = st_folium(
