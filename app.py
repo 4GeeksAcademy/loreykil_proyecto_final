@@ -1,5 +1,6 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import branca.colormap as cm
@@ -31,15 +32,16 @@ st.set_page_config(
 )
 
 st.title("Título de la App")
-st.write(
-    "Selecciona un punto del océano para estimar la concentración "
-    "esperada de microplásticos a partir de las condiciones oceánicas reales."
-)
 mode = st.radio(
     "",
     ["Flujo interactivo", "Análisis por capas"],
     horizontal=True
 )
+st.write(
+    "Selecciona un punto del océano para estimar la concentración "
+    "esperada de microplásticos a partir de las condiciones oceánicas reales."
+)
+
 
 # CARGA DE RECURSOS
 
@@ -86,6 +88,37 @@ RANGES = {
     "phosphate": (0, 5),
     "oxygen_dissolved": (30, 400),
     "oxygen_utilization": (0, 300)
+}
+
+ENV_VARS_META = {
+    "temperature": {
+        "label": "Temperatura del agua",
+        "unit": "°C"
+    },
+    "salinity": {
+        "label": "Salinidad",
+        "unit": None
+    },
+    "chlorophyll": {
+        "label": "Clorofila-a",
+        "unit": "mg/m³"
+    },
+    "nitrate": {
+        "label": "Nitrato",
+        "unit": "µmol/L"
+    },
+    "phosphate": {
+        "label": "Fosfato",
+        "unit": "µmol/L"
+    },
+    "oxygen_dissolved": {
+        "label": "Oxígeno disuelto",
+        "unit": "µmol/kg"
+    },
+    "oxygen_utilization": {
+        "label": "Utilización de oxígeno",
+        "unit": "µmol/kg"
+    }
 }
 
 PROFILE_DESCRIPTIONS = {
@@ -201,18 +234,19 @@ def get_ocean_profile_at_point(gdf_continuo, lon, lat):
     return gdf_continuo.loc[idx, "profile_eco"]
 
 def plot_oceanographic_radar(env_point, env_mean, profile_name):
-    labels = FEATURES
+    tech_labels = FEATURES
+    display_labels = [ENV_VARS_META[k]["label"] for k in FEATURES]
     values_point = [
         normalize(env_point[k], *RANGES[k])
-        for k in labels
+        for k in tech_labels
     ]
     values_mean = [
         normalize(env_mean[k], *RANGES[k])
-        for k in labels
+        for k in tech_labels
     ]
 
     # cerrar polígonos
-    labels_closed = labels + [labels[0]]
+    display_labels_closed = display_labels + [display_labels[0]]
     values_point += [values_point[0]]
     values_mean += [values_mean[0]]
     
@@ -224,7 +258,7 @@ def plot_oceanographic_radar(env_point, env_mean, profile_name):
     # Perfil medio (sombreado)
     fig.add_trace(go.Scatterpolar(
         r=values_mean,
-        theta=labels_closed,
+        theta=display_labels_closed,
         fill='toself',
         fillcolor=color_profile,
         line=dict(color=color_profile),
@@ -235,7 +269,7 @@ def plot_oceanographic_radar(env_point, env_mean, profile_name):
     # Punto seleccionado (línea)
     fig.add_trace(go.Scatterpolar(
         r=values_point,
-        theta=labels_closed,
+        theta=display_labels_closed,
         fill=None,
         line=dict(
             width=2,
@@ -346,9 +380,19 @@ if mode == "Flujo interactivo":
                 profile_name=profile_name
             )
             st.plotly_chart(fig, use_container_width=True)
+            st.caption("Los valores están normalizados (0–1) y no representan unidades físicas.")
 
             with st.expander("Ver valores numéricos"):
-                st.json(env_vars)
+                pretty_env_vars = pd.DataFrame([
+                    {
+                        "Variable": ENV_VARS_META[k]["label"],
+                        "Valor": round(float(env_vars[k]), 3),
+                        "Unidad": ENV_VARS_META[k]["unit"] or "-"
+                    }
+                    for k in FEATURES
+                    
+                ])
+                st.table(pretty_env_vars)
 
             
         
