@@ -6,3 +6,7 @@ shapely
 joblib
 numpy
 pandas
+plotly
+branca
+scikit-learn
+matplotlip
