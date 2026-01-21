@@ -249,8 +249,8 @@ def plot_oceanographic_radar(env_point, env_mean, profile_name):
     display_labels_closed = display_labels + [display_labels[0]]
     values_point += [values_point[0]]
     values_mean += [values_mean[0]]
-    
-    profile_label = PROFILE_LABELS.get(ocean_profile, ocean_profile)
+
+    profile_label = PROFILE_LABELS.get(profile_name, profile_name)
     color_profile = PROFILE_COLORS.get(profile_name, "#999999")
     
     fig = go.Figure()
@@ -415,7 +415,7 @@ if mode == "Flujo interactivo":
     )
 
     st.sidebar.subheader("Composición morfológica dominante")
-
+    hazard_ready = True
     profile = st.sidebar.selectbox(
         "Selecciona un perfil",
         [
@@ -439,7 +439,7 @@ if mode == "Flujo interactivo":
         proportions = {"fibers": 0.25, "fragments": 0.25, "spheres": 0.25, "others": 0.25}
 
     elif profile == "Personalizado":
-        col1, col2 = st.columns(2)
+        col1, col2 = st.sidebar.columns(2)
         with col1:
             fibers = st.sidebar.slider("Fibras", 0, 100, 40)
             fragments = st.sidebar.slider("Fragmentos", 0, 100, 30)
@@ -447,80 +447,82 @@ if mode == "Flujo interactivo":
             spheres = st.sidebar.slider("Esferas", 0, 100, 20)
             others = st.sidebar.slider("Otros", 0, 100, 10)
         total = fibers + fragments + spheres + others
-
-    # Cálculo de Hazard Index
-    if profile == "Personalizado":
         if total != 100:
-            st.sidebar.warning("Las proporciones deben sumar 100 %.")
-            st.stop()
-
-        proportions = {
+            hazard_ready = False
+        else:
+            proportions = {
             "fibers": fibers / 100,
             "fragments": fragments / 100,
             "spheres": spheres / 100,
             "others": others / 100
         }
-    if st.session_state.mp_real is None:
-        st.info("Selecciona un punto en el mapa para obtener microplásticos.")
-        st.stop()
-
-    mp_real = st.session_state.mp_real
-    hazard_pressure = compute_hazard_pressure(mp_concentration=mp_real, ref_max=MP_REF_P95)
-    hazard_morphology = compute_hazard_morphology(proportions)
-    hazard_index = compute_hazard_index(hazard_pressure, hazard_morphology)
-    label = hazard_label(hazard_index)
-
-    # OUTPUTS
-    # Hazard Index + etiqueta
+    # si no está listo, mostrar advertencia y no calcular hazard
+    if not hazard_ready:
+        st.sidebar.warning("La suma de las proporciones debe ser 100%.")
+        st.info("Ajusta las proporciones morfológicas en la barra lateral.")
+    else:
+        if st.session_state.mp_real is None:
+            st.info("Selecciona un punto en el mapa para obtener microplásticos.")
+            st.stop()
         
-    st.subheader("Hazard Index")
+        # Cálculo
+        mp_real = st.session_state.mp_real
 
-    st.metric(
-        label="Riesgo potencial por microplásticos",
-        value=f"{hazard_index:.2f}",
-        help="Índice normalizado entre 0 y 1"
-    )
-
-    st.write(f"**Nivel:** {label}")
-
-    # OUTPUTS
-    # Barra horizontal de colores
+        # MP_REF_P95 se usa como referencia global (percentil 95 observado)
+        # para normalizar la presión por microplásticos
+        hazard_pressure = compute_hazard_pressure(mp_concentration=mp_real, ref_max=MP_REF_P95)
         
-    st.progress(hazard_index)
+        hazard_morphology = compute_hazard_morphology(proportions)
+        hazard_index = compute_hazard_index(hazard_pressure, hazard_morphology)
+        label = hazard_label(hazard_index)
+        
+        # Visualización
+        st.subheader("Hazard Index")
+
+        st.metric(
+            label="Riesgo potencial por microplásticos",
+            value=f"{hazard_index:.2f}",
+            help="Índice normalizado entre 0 y 1"
+        )
+
+        st.write(f"**Nivel:** {label}")
+
+        st.progress(hazard_index)
     # Gráfico de indicador
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=hazard_index,
-        domain={'x': [0, 1], 'y': [0, 1]},
-        gauge={
-            'axis': {'range': [0, 1]},
-            'bar': {'color': "darkblue"},
-            'steps': [
-                {'range': [0, 0.33], 'color': "green"},
-                {'range': [0.33, 0.66], 'color': "orange"},
-                {'range': [0.66, 1], 'color': "red"}
-            ],
-        }
-    ))
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=hazard_index,
+            domain={'x': [0, 1], 'y': [0, 1]},
+            gauge={
+                'axis': {'range': [0, 1]},
+                'bar': {'color': "darkblue"},
+                'steps': [
+                    {'range': [0, 0.33], 'color': "green"},
+                    {'range': [0.33, 0.66], 'color': "orange"},
+                    {'range': [0.66, 1], 'color': "red"}
+                ],
+            }
+        ))
 
-    st.plotly_chart(fig, use_container_width=True)
 
-    # Gráfico de distribución del Hazard Index observado
+        st.plotly_chart(fig, use_container_width=True)
 
-    hazard_values = hazard_gdf["hazard_index"].values
-    percentile = (hazard_values < hazard_index).mean() * 100
+        # Gráfico de distribución del Hazard Index observado
 
-    fig, ax = plt.subplots()
-    ax.hist(hazard_values, bins=30, alpha=0.7)
-    ax.axvline(hazard_index, color="red", linewidth=2)
-    ax.set_xlabel("Hazard Index observado")
-    ax.set_ylabel("Frecuencia")
+        hazard_values = hazard_gdf["hazard_index"].values
+        percentile = (hazard_values < hazard_index).mean() * 100
 
-    st.pyplot(fig)
+        fig, ax = plt.subplots()
+        ax.hist(hazard_values, bins=30, alpha=0.7)
+        ax.axvline(hazard_index, color="red", linewidth=2)
+        ax.set_xlabel("Hazard Index observado")
+        ax.set_ylabel("Frecuencia")
 
-    st.write(
-        f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
-    )
+        st.pyplot(fig)
+
+        st.write(
+            f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
+        )
 
 elif mode == "Análisis por capas":
 
