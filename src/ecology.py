@@ -58,8 +58,8 @@ def load_ecology_models():
     """
     Carga los modelos ecológicos finales.
     """
-    rf_risk = joblib.load("models/rf_risk_INDEX.joblib")["model"]
-    rf_species = joblib.load("models/rf_species_RAW.joblib")["model"]
+    rf_risk = joblib.load("models/Grilla_species/rf_mean_risk_INDEX.joblib")["model"]
+    rf_species = joblib.load("models/Grilla_species/rf_species_count_RAW.joblib")["model"]
     return rf_risk, rf_species
 
 

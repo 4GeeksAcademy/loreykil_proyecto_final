@@ -274,3 +274,228 @@ st.write(
     f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
 )
 
+
+# CAPA 3
+ECO_PERC = {
+    "eco_count": {
+        "low": 53,
+        "medium": 147,
+        "high": 464,
+    }
+}
+@st.cache_data
+def get_iucn_risk_distribution():
+    gdf_risk = gpd.read_file(
+        "./data/Predicciones/risk_prediction_with_confidence.gpkg"
+    )
+    return gdf_risk["iucn_mean_risk"].dropna().values
+
+# Imports nuevos
+from src.ecology import (
+    load_ecology_models,
+    build_cell_dataframe,
+    predict_ecological_impact
+)
+
+# Cargar modelos (cacheados)
+@st.cache_resource
+def get_ecology_models():
+    return load_ecology_models()
+
+rf_risk, rf_species = get_ecology_models()
+
+# Checkbox para activar exploración
+st.header("Implicaciones ecológicas esperadas")
+
+explore_ecology = st.checkbox(
+    "Explorar escenarios ecológicos alternativos",
+    help=(
+        "Permite explorar cómo cambiarían las implicaciones ecológicas "
+        "si el contexto ecológico local fuese diferente al observado."
+    )
+)
+#Solo se exponen al usuario aquellas variables que puede interpretar 
+# y para las que existen rangos empíricos claros. El resto se mantiene
+#  en su valor de ausencia, reproduciendo el comportamiento por defecto del modelo.
+
+# Inputs semánticos (solo si el checkbox está activo)
+# Valores por defecto (modo no exploratorio)
+richness_level = "Media"
+complexity_level = 2
+eco_overrides = {}
+
+if explore_ecology:
+    st.subheader("Escenario ecológico hipotético")
+
+    richness_level = st.selectbox(
+        "Presencia de especies en riesgo",
+        ["Baja", "Media", "Alta"],
+        index=1
+    )
+
+    complexity_level = st.selectbox(
+        "Cantidad de formas de microplásticos presentes",
+        [2, 3, 4],
+        index=1
+    )
+
+# Mapeo de escenarios a valores reales
+level_map_richness = {
+    "Baja": "low",
+    "Media": "medium",
+    "Alta": "high"
+}
+
+eco_overrides = {
+    "eco_count": ECO_PERC["eco_count"][level_map_richness[richness_level]],
+    "eco_shape_richness": complexity_level,
+}
+cell_df = build_cell_dataframe(
+    hazard_index=hazard_index,
+    mp_real=mp_real,
+    morphology={
+        "fibers": proportions["fibers"],
+        "fragments": proportions["fragments"],
+        "spheres": proportions["spheres"],
+        "others": proportions["others"],
+    },
+    env_vars=env_vars,
+    extra_ecology={
+        "eco_count": eco_overrides.get("eco_count", 0),
+        "eco_shape_richness": eco_overrides.get("eco_shape_richness", 2),  # 👈 baseline correcto
+        "eco_mean_size": 0,
+        "eco_small_ratio": 0,
+        "log_dist_m": 0,
+        "eco_dist_m": 0,
+        "noaa_mp_mean": mp_real,
+        "noaa_mp_max": mp_real,
+        "noaa_mp_count": 1,
+    },
+)
+
+with st.expander("¿Qué variables se están usando ahora?"):
+
+    st.markdown("### Variables ambientales (observadas)")
+    st.write(
+        "- Temperatura\n"
+        "- Salinidad\n"
+        "- Clorofila\n"
+        "- Nutrientes\n"
+        "- Oxígeno"
+    )
+
+    st.markdown("### Presión por microplásticos")
+    st.write(
+        f"- Concentración estimada: {mp_real:.2f} items/m³\n"
+        f"- Hazard index: {hazard_index:.2f}"
+    )
+
+    if explore_ecology:
+        st.markdown("### Contexto ecológico (escenario definido por el usuario)")
+        st.write(
+            f"- Presencia de especies vulnerables en riesgo (eco_count): {eco_overrides['eco_count']:.0f}\n"
+            f"- Diversidad morfológica (eco_shape_richness): {eco_overrides['eco_shape_richness']}"
+        )
+    else:
+        st.markdown("### Contexto ecológico (no observado)")
+        st.write(
+            "- Presencia de especies en riesgo: asumida como ausente\n"
+            "- Diversidad morfológica: mínima plausible (2 formas)"
+        )
+
+    st.markdown("### Variables no utilizadas activamente")
+    st.write(
+        "- Tamaño medio de organismos\n"
+        "- Proporción de organismos pequeños\n"
+        "- Distancias ecológicas\n"
+        "\nEstas variables no informan la predicción en el estado actual."
+    )
+
+# ------------------------------------
+# Indicador de modo de predicción
+# ------------------------------------
+
+if explore_ecology:
+    mode_icon = "🟡"
+    mode_title = "Escenario ecológico exploratorio"
+    mode_text = (
+        "El resultado se basa en un escenario ecológico definido por el usuario, "
+        "acotado por valores observados reales."
+    )
+else:
+    mode_icon = "🔵"
+    mode_title = "Predicción por extrapolación ambiental"
+    mode_text = (
+        "El resultado se basa en variables ambientales y presión por microplásticos. "
+        "No hay información ecológica local observada."
+    )
+
+st.markdown(
+    f"""
+    ### {mode_icon} {mode_title}
+    {mode_text}
+    """
+)
+
+# Predicción
+eco_result = predict_ecological_impact(
+    cell_df,
+    rf_risk,
+    rf_species
+)
+
+# Calcular percentil del valor predicho
+risk_dist = get_iucn_risk_distribution()
+risk_pred = eco_result["risk_mean"]
+
+percentile = (risk_dist < risk_pred).mean() * 100
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric(
+        "Riesgo ecológico por presión medio esperado",
+        f"{eco_result['risk_mean']:.2f} / 4"
+    )
+
+with col2:
+    st.metric(
+        "Especies vulnerables en riesgo por presión esperadas",
+        f"{eco_result['species_at_risk']:.1f}"
+    )
+
+st.caption(
+    "Resultados basados en patrones globales. "
+    "Interpretar a escala regional."    
+)
+st.caption(
+    "Este resultado no representa un efecto causal directo de los microplásticos sobre las especies, sino una estimación de las implicaciones ecológicas potenciales asociadas a niveles de presión por microplásticos bajo condiciones ambientales similares a las observadas"
+)
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+ax.hist(risk_dist, bins=30, alpha=0.7)
+ax.axvline(risk_pred, color="red", linewidth=2)
+ax.set_xlabel("iucn_mean_risk observado")
+ax.set_ylabel("Frecuencia")
+ax.set_title("Distribución global del riesgo ecológico")
+
+st.pyplot(fig)
+
+st.write(
+    f"Este valor se sitúa en el percentil **{percentile:.1f}** "
+    "del riesgo ecológico observado."
+)
+
+if explore_ecology:
+    st.warning(
+        "Este resultado corresponde a un escenario ecológico exploratorio "
+        "definido por el usuario y no a una predicción basada únicamente en datos observados."
+    )
+else:
+    st.info(
+        "Este resultado se basa en patrones aprendidos a partir de datos observados "
+        "y extrapolación ambiental en regiones sin información ecológica directa."
+    )
+
+# CAPA 3 toma el hazard que ya calculamos y lo traduce en consecuencias ecológicas esperadas.
