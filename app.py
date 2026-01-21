@@ -1,5 +1,6 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import branca.colormap as cm
@@ -20,10 +21,10 @@ from src.hazard import (
     hazard_label
 )
 
+# CONFIGURACIÓN BÁSICA
+
 if "mp_real" not in st.session_state:
     st.session_state.mp_real = None
-
-# CONFIGURACIÓN BÁSICA
 
 st.set_page_config(
     page_title="Título de la App",
@@ -31,10 +32,16 @@ st.set_page_config(
 )
 
 st.title("Título de la App")
+mode = st.radio(
+    "",
+    ["Flujo interactivo", "Análisis por capas"],
+    horizontal=True
+)
 st.write(
     "Selecciona un punto del océano para estimar la concentración "
     "esperada de microplásticos a partir de las condiciones oceánicas reales."
 )
+
 
 # CARGA DE RECURSOS
 
@@ -61,33 +68,112 @@ def get_mp_gdf():
 model = get_model()
 grilla = get_grilla()
 gdf_continuo = get_mapa_continuo()
-hazard_gdf = get_hazard_gdf()
 mp_gdf = get_mp_gdf()
+hazard_gdf = get_hazard_gdf()
+
 mp_observed = mp_gdf["microplastics_measurement"].dropna().values
 MP_REF_P95 = np.percentile(mp_observed, 95)
 
+# CONFIGURACIÖN SEMÁNTICA
+
 FEATURES = ['temperature', 'salinity', 'chlorophyll', 'nitrate',
-            'phosphate', 'oxygen_dissolved', 'oxygen_utilization']
+            'phosphate', 'oxygen_dissolved', 'oxygen_utilization'
+]
 
-# CAPA 1  - MAPA INTERACTIVO
+RANGES = {
+    "temperature": (-2, 30),
+    "salinity": (5, 40),
+    "chlorophyll": (-1, 1),
+    "nitrate": (0, 37),
+    "phosphate": (0, 5),
+    "oxygen_dissolved": (30, 400),
+    "oxygen_utilization": (0, 300)
+}
 
-st.header("Selección espacial")
+ENV_VARS_META = {
+    "temperature": {
+        "label": "Temperatura del agua",
+        "unit": "°C"
+    },
+    "salinity": {
+        "label": "Salinidad",
+        "unit": None
+    },
+    "chlorophyll": {
+        "label": "Clorofila-a",
+        "unit": "mg/m³"
+    },
+    "nitrate": {
+        "label": "Nitrato",
+        "unit": "µmol/L"
+    },
+    "phosphate": {
+        "label": "Fosfato",
+        "unit": "µmol/L"
+    },
+    "oxygen_dissolved": {
+        "label": "Oxígeno disuelto",
+        "unit": "µmol/kg"
+    },
+    "oxygen_utilization": {
+        "label": "Utilización de oxígeno",
+        "unit": "µmol/kg"
+    }
+}
 
-def get_ocean_profile_at_point(gdf_continuo, lon, lat):
-    point = Point(lon, lat)
+PROFILE_DESCRIPTIONS = {
+    "subpolar_open_sea": (
+        "Aguas frías de mar abierto con alta disponibilidad de nutrientes "
+        "pero baja producción primaria. "
+        "Característico de regiones subpolares con fuerte mezcla vertical "
+        "y consumo elevado de oxígeno."
+    ),
+    "open_sea_temperate": (
+        "Región oceánica alejada de la costa, con temperaturas "
+        "templadas y baja productividad primaria. "
+        "Aguas bien oxigenadas, con concentraciones moderadas de "
+        "nutrientes, típicas de sistemas oligotróficos de mar abierto."
+    ),
+    "cold_open_sea": (
+        "Región oceánica remota y fría, con alta disponibilidad de "
+        "nutrientes y productividad relativamente elevada. "
+        "Aguas bien oxigenadas, asociadas a sistemas productivos de "
+        "latitudes altas o zonas de afloramiento lejano."
+    ),
+    "cold_shelf": (
+        "Zona costera fría, influenciada por aportes continentales y "
+        "mezcla costera. "
+        "Presenta mayor productividad relativa y aguas muy oxigenadas, "
+        "características de plataformas frías y dinámicas."
+    ),
+    "warm_coastal": (
+        "Zona costera cálida, cercana a tierra, con productividad "
+        "moderada y bajos nutrientes. "
+        "Representa sistemas costeros oligotróficos influenciados por "
+        "temperaturas elevadas"
+    ),
+}
 
-    # Asegurar CRS coherente para distancias
-    if gdf_continuo.crs.is_geographic:
-        gdf_proj = gdf_continuo.to_crs(epsg=3857)
-        point_proj = gpd.GeoSeries([point], crs=4326).to_crs(epsg=3857).iloc[0]
-    else:
-        gdf_proj = gdf_continuo
-        point_proj = point
+PROFILE_LABELS = {
+    "subpolar_open_sea": "Mar abierto subpolar",
+    "open_sea_temperate": "Mar abierto templado",
+    "cold_open_sea": "Mar abierto frío",
+    "cold_shelf": "Plataforma continental fría",
+    "warm_coastal": "Costa cálida"
+}
 
-    distances = gdf_proj.geometry.distance(point_proj)
-    idx = distances.idxmin()
+PROFILE_COLORS = {
+    "subpolar_open_sea": "#1f77b4",     # azul
+    "open_sea_temperate": "#ff7f0e",  # naranja
+    "cold_open_sea": "#2ca02c",      # verde
+    "cold_shelf": "#9467bd",      # morado
+    "warm_coastal": "#189E93"
+}
 
-    return gdf_continuo.loc[idx, "profile_eco"]
+# FUNCIONES AUXILIARES
+
+def normalize(value, vmin, vmax):
+    return max(0, min(1, (value - vmin) / (vmax - vmin)))
 
 @st.cache_resource
 def build_map(_gdf_continuo):
@@ -122,155 +208,348 @@ def build_map(_gdf_continuo):
     colormap.add_to(m)
     return m
 
-m = build_map(gdf_continuo)
+@st.cache_data
+def compute_profile_means(_gdf_continuo, profile_col="profile_eco"):
+    return (
+        _gdf_continuo
+        .groupby(profile_col)[FEATURES]
+        .mean()
+    )
+profile_means = compute_profile_means(gdf_continuo)
 
-# Render del mapa en Streamlit
-map_data = st_folium(
-    m,
-    width=700,
-    height=450
-)
-# Obtener coordenadas del clic del usuario
-if map_data and map_data.get("last_clicked"):
-    lat = map_data["last_clicked"]["lat"]
-    lon = map_data["last_clicked"]["lng"]
 
-    st.success(f"Punto seleccionado: lat={lat:.3f}, lon={lon:.3f}")
+def get_ocean_profile_at_point(gdf_continuo, lon, lat):
+    point = Point(lon, lat)
+    # Asegurar CRS coherente para distancias
+    if gdf_continuo.crs.is_geographic:
+        gdf_proj = gdf_continuo.to_crs(epsg=3857)
+        point_proj = gpd.GeoSeries([point], crs=4326).to_crs(epsg=3857).iloc[0]
+    else:
+        gdf_proj = gdf_continuo
+        point_proj = point
 
-    # PREDICCIÓN
-    result = predict_microplastics_at_point(
-        lon=lon,
-        lat=lat,
-        grilla=grilla,
-        model=model,
-        feature_names=FEATURES
+    distances = gdf_proj.geometry.distance(point_proj)
+    idx = distances.idxmin()
+
+    return gdf_continuo.loc[idx, "profile_eco"]
+
+def plot_oceanographic_radar(env_point, env_mean, profile_name):
+    tech_labels = FEATURES
+    display_labels = [ENV_VARS_META[k]["label"] for k in FEATURES]
+    values_point = [
+        normalize(env_point[k], *RANGES[k])
+        for k in tech_labels
+    ]
+    values_mean = [
+        normalize(env_mean[k], *RANGES[k])
+        for k in tech_labels
+    ]
+
+    # cerrar polígonos
+    display_labels_closed = display_labels + [display_labels[0]]
+    values_point += [values_point[0]]
+    values_mean += [values_mean[0]]
+
+    profile_label = PROFILE_LABELS.get(profile_name, profile_name)
+    color_profile = PROFILE_COLORS.get(profile_name, "#999999")
+    
+    fig = go.Figure()
+
+    # Perfil medio (sombreado)
+    fig.add_trace(go.Scatterpolar(
+        r=values_mean,
+        theta=display_labels_closed,
+        fill='toself',
+        fillcolor=color_profile,
+        line=dict(color=color_profile),
+        opacity=0.3,
+        name=f'Perfil oceanográfico ({profile_label})'
+    ))
+
+    # Punto seleccionado (línea)
+    fig.add_trace(go.Scatterpolar(
+        r=values_point,
+        theta=display_labels_closed,
+        fill=None,
+        line=dict(
+            width=2,
+            color="black"
+        ),
+        marker=dict(size=6),
+        name="Punto seleccionado"
+    ))
+
+    return fig
+
+# INTERACCIÓN CAPA 1
+if mode == "Flujo interactivo":
+    st.header("Selección espacial")
+    m = build_map(gdf_continuo)
+
+    # Render del mapa en Streamlit
+    map_data = st_folium(
+        m,
+        width=700,
+        height=450
+    )
+    # Obtener coordenadas del clic del usuario
+    if map_data and map_data.get("last_clicked"):
+        lat = map_data["last_clicked"]["lat"]
+        lon = map_data["last_clicked"]["lng"]
+
+        st.success(f"Punto seleccionado: lat={lat:.3f}, lon={lon:.3f}")
+
+        # PREDICCIÓN
+        result = predict_microplastics_at_point(
+            lon=lon,
+            lat=lat,
+            grilla=grilla,
+            model=model,
+            feature_names=FEATURES
+        )
+
+        # OUTPUTS
+
+        st.subheader("Resultado")
+
+        if result.get("status") == "water":
+            # Microplásticos
+            st.subheader("Concentración esperada de microplásticos")
+            st.metric(
+                label="Estimación",
+                value=f"{result['microplastics_real']:.2f} items/m³"
+            )
+            st.session_state.mp_real = result["microplastics_real"]
+            with st.expander("Ver valor en escala logarítmica"):
+                st.write(f"{result['microplastics_log']:.3f}")
+
+            # Extraer perfil oceanográfico desde el mapa contínuo
+            ocean_profile = get_ocean_profile_at_point(
+                gdf_continuo,
+                lon=lon,
+                lat=lat
+            )
+            # Perfil ecológico
+            profile_label = PROFILE_LABELS.get(ocean_profile, ocean_profile)
+            color = PROFILE_COLORS.get(ocean_profile, "#999999")
+            
+            st.subheader("Perfil oceanográfico asociado al punto")
+            st.markdown(
+                f"""
+                <div style="
+                color:{color};
+                font-weight:600;
+                font-size:16px;
+                ">
+                    {profile_label}
+                </div>
+                """,
+                unsafe_allow_html=True
+                )
+            description = PROFILE_DESCRIPTIONS.get(
+                ocean_profile,
+                "No hay descripción disponible para este perfil."
+            )
+            st.markdown(
+                f"""
+                <div style="
+                    border-left:6px solid {color};
+                    background-color:rgba(0,0,0,0.03);
+                    padding:12px 14px;
+                    border-radius:6px;
+                    font-size:14px;
+                    line-height:1.5;
+                    margin-top:6px;
+                    margin-bottom:12px;
+                ">
+                    {description}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+
+            # Añadirlo como una variable más
+            env_vars = result['environmental_variables'].copy()
+            env_vars["ocean_profile"] = ocean_profile
+            profile_name = ocean_profile
+            env_mean = profile_means.loc[profile_name].to_dict()
+            fig = plot_oceanographic_radar(
+                env_point=env_vars,
+                env_mean=env_mean,
+                profile_name=profile_name
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption("Los valores están normalizados (0–1) y no representan unidades físicas.")
+
+            with st.expander("Ver valores numéricos"):
+                pretty_env_vars = pd.DataFrame([
+                    {
+                        "Variable": ENV_VARS_META[k]["label"],
+                        "Valor": round(float(env_vars[k]), 3),
+                        "Unidad": ENV_VARS_META[k]["unit"] or "-"
+                    }
+                    for k in FEATURES
+                    
+                ])
+                st.table(pretty_env_vars)
+
+            
+        
+        elif result.get("status") == "land":
+            st.warning(result.get("message"))
+            st.info("Por favor, selecciona un punto dentro del océano para obtener una predicción.")
+        else:
+            st.error("Resultado inesperado.")
+
+    else:
+        st.info("Haz clic en el mapa para seleccionar un punto del océano.")
+
+    # CAPA 2  - Hazard Index
+
+    st.header("Índice de riesgo por microplásticos")
+
+    st.write(
+        "Dado el mismo nivel de microplásticos, explora cómo cambia"
+        "el riesgo potencial al modificar su composición morfológica"
     )
 
-    # OUTPUTS
+    st.sidebar.subheader("Composición morfológica dominante")
+    hazard_ready = True
+    profile = st.sidebar.selectbox(
+        "Selecciona un perfil",
+        [
+            "Dominio de fibras",
+            "Dominio de fragmentos",
+            "Dominio de esferas",
+            "Mezcla equilibrada",
+            "Personalizado"
+        ]
+    )
+    if profile == "Dominio de fibras":
+        proportions = {"fibers": 0.7, "fragments": 0.15, "spheres": 0.1, "others": 0.05}
 
-    st.subheader("Resultado")
+    elif profile == "Dominio de fragmentos":
+        proportions = {"fibers": 0.15, "fragments": 0.7, "spheres": 0.1, "others": 0.05}
 
-    if result.get("status") == "water":
-        st.subheader("Concentración esperada de microplásticos")
+    elif profile == "Dominio de esferas":
+        proportions = {"fibers": 0.1, "fragments": 0.15, "spheres": 0.7, "others": 0.05}
+
+    elif profile == "Mezcla equilibrada":
+        proportions = {"fibers": 0.25, "fragments": 0.25, "spheres": 0.25, "others": 0.25}
+
+    elif profile == "Personalizado":
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            fibers = st.sidebar.slider("Fibras", 0, 100, 40)
+            fragments = st.sidebar.slider("Fragmentos", 0, 100, 30)
+        with col2:
+            spheres = st.sidebar.slider("Esferas", 0, 100, 20)
+            others = st.sidebar.slider("Otros", 0, 100, 10)
+        total = fibers + fragments + spheres + others
+        if total != 100:
+            hazard_ready = False
+        else:
+            proportions = {
+            "fibers": fibers / 100,
+            "fragments": fragments / 100,
+            "spheres": spheres / 100,
+            "others": others / 100
+        }
+    # si no está listo, mostrar advertencia y no calcular hazard
+    if not hazard_ready:
+        st.sidebar.warning("La suma de las proporciones debe ser 100%.")
+        st.info("Ajusta las proporciones morfológicas en la barra lateral.")
+    else:
+        if st.session_state.mp_real is None:
+            st.info("Selecciona un punto en el mapa para obtener microplásticos.")
+            st.stop()
+        
+        # Cálculo
+        mp_real = st.session_state.mp_real
+
+        # MP_REF_P95 se usa como referencia global (percentil 95 observado)
+        # para normalizar la presión por microplásticos
+        hazard_pressure = compute_hazard_pressure(mp_concentration=mp_real, ref_max=MP_REF_P95)
+        
+        hazard_morphology = compute_hazard_morphology(proportions)
+        hazard_index = compute_hazard_index(hazard_pressure, hazard_morphology)
+        label = hazard_label(hazard_index)
+        
+        # Visualización
+        st.subheader("Hazard Index")
 
         st.metric(
-            label="Estimación",
-            value=f"{result['microplastics_real']:.2f} items/m³"
+            label="Riesgo potencial por microplásticos",
+            value=f"{hazard_index:.2f}",
+            help="Índice normalizado entre 0 y 1"
         )
-        st.session_state.mp_real = result["microplastics_real"]
 
-        st.subheader("Variables ambientales asociadas")
-        # Extraer perfil oceanográfico desde el mapa contínuo
-        ocean_profile = get_ocean_profile_at_point(
-            gdf_continuo,
-            lon=lon,
-            lat=lat
+        st.write(f"**Nivel:** {label}")
+
+        st.progress(hazard_index)
+    # Gráfico de indicador
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=hazard_index,
+            domain={'x': [0, 1], 'y': [0, 1]},
+            gauge={
+                'axis': {'range': [0, 1]},
+                'bar': {'color': "darkblue"},
+                'steps': [
+                    {'range': [0, 0.33], 'color': "green"},
+                    {'range': [0.33, 0.66], 'color': "orange"},
+                    {'range': [0.66, 1], 'color': "red"}
+                ],
+            }
+        ))
+
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Gráfico de distribución del Hazard Index observado
+
+        hazard_values = hazard_gdf["hazard_index"].values
+        percentile = (hazard_values < hazard_index).mean() * 100
+
+        fig, ax = plt.subplots()
+        ax.hist(hazard_values, bins=30, alpha=0.7)
+        ax.axvline(hazard_index, color="red", linewidth=2)
+        ax.set_xlabel("Hazard Index observado")
+        ax.set_ylabel("Frecuencia")
+
+        st.pyplot(fig)
+
+        st.write(
+            f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
         )
-        # Añadirlo como una variable más
-        env_vars = result['environmental_variables'].copy()
-        env_vars["ocean_profile"] = ocean_profile
-        st.json(env_vars)
 
-        with st.expander("Ver valor en escala logarítmica"):
-            st.write(f"{result['microplastics_log']:.3f}")
-    
-    elif result.get("status") == "land":
-        st.warning(result.get("message"))
-        st.info("Por favor, selecciona un punto dentro del océano para obtener una predicción.")
-    else:
-        st.error("Resultado inesperado.")
+elif mode == "Análisis por capas":
 
-else:
-    st.info("Haz clic en el mapa para seleccionar un punto del océano.")
+    st.sidebar.header("Capas")
 
-# CAPA 2  - Hazard Index
+    capa = st.sidebar.radio(
+        "",
+        ["Microplásticos", "Hazard", "Ecología"]
+    )
 
-st.header("Índice de riesgo por microplásticos")
+    if capa == "Microplásticos":
+        st.header("Análisis de microplásticos")
 
-st.write(
-    "Dado el mismo nivel de microplásticos, explora cómo cambia"
-    "el riesgo potencial al modificar su composición morfológica"
-)
+        fig, ax = plt.subplots()
+        ax.hist(mp_gdf["microplastics_measurement"].dropna(), bins=40)
+        st.pyplot(fig)
 
-st.subheader("Composición morfológica (%)")
+        st.dataframe(mp_gdf.head(200))
 
-if st.session_state.mp_real is None:
-    st.info("Selecciona un punto en el mapa para obtener la concentración de microplásticos.")
-    st.stop()
-mp_real = st.session_state.mp_real
-fibers = st.slider("Fibras", 0, 100, 40)
-fragments = st.slider("Fragmentos", 0, 100, 30)
-spheres = st.slider("Esferas", 0, 100, 20)
-others = st.slider("Otros", 0, 100, 10)
+    elif capa == "Hazard":
+        st.header("Análisis del Hazard Index")
 
-total = fibers + fragments + spheres + others
+        fig, ax = plt.subplots()
+        ax.hist(hazard_gdf["hazard_index"], bins=40)
+        st.pyplot(fig)
 
-# Cálculo de Hazard Index
-if total != 100:
-    st.warning("Las proporciones deben sumar 100 %.")
-    st.stop()
-else:
-    proportions = {
-        "fibers": fibers / 100,
-        "fragments": fragments / 100,
-        "spheres": spheres / 100,
-        "others": others / 100
-    }
+        st.dataframe(hazard_gdf[["hazard_index"]].describe())
 
-    hazard_pressure = compute_hazard_pressure(mp_concentration=mp_real, ref_max=MP_REF_P95)
-    hazard_morphology = compute_hazard_morphology(proportions)
-    hazard_index = compute_hazard_index(hazard_pressure, hazard_morphology)
-    label = hazard_label(hazard_index)
-
-# OUTPUTS
- # Hazard Index + etiqueta
-    
-st.subheader("Hazard Index")
-
-st.metric(
-    label="Riesgo potencial por microplásticos",
-    value=f"{hazard_index:.2f}",
-    help="Índice normalizado entre 0 y 1"
-)
-
-st.write(f"**Nivel:** {label}")
-
-# OUTPUTS
- # Barra horizontal de colores
-    
-st.progress(hazard_index)
-# Gráfico de indicador
-fig = go.Figure(go.Indicator(
-    mode="gauge+number",
-    value=hazard_index,
-    domain={'x': [0, 1], 'y': [0, 1]},
-    gauge={
-        'axis': {'range': [0, 1]},
-        'bar': {'color': "darkblue"},
-        'steps': [
-            {'range': [0, 0.33], 'color': "green"},
-            {'range': [0.33, 0.66], 'color': "orange"},
-            {'range': [0.66, 1], 'color': "red"}
-        ],
-    }
-))
-
-st.plotly_chart(fig, use_container_width=True)
-
-# Gráfico de distribución del Hazard Index observado
-
-hazard_values = hazard_gdf["hazard_index"].values
-percentile = (hazard_values < hazard_index).mean() * 100
-
-fig, ax = plt.subplots()
-ax.hist(hazard_values, bins=30, alpha=0.7)
-ax.axvline(hazard_index, color="red", linewidth=2)
-ax.set_xlabel("Hazard Index observado")
-ax.set_ylabel("Frecuencia")
-
-st.pyplot(fig)
-
-st.write(
-    f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
-)
-
+    elif capa == "Ecología":
+        st.info("Capa ecológica en desarrollo.")
