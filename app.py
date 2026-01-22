@@ -8,6 +8,7 @@ from streamlit_folium import st_folium
 import folium
 import plotly.graph_objects as go
 from shapely.geometry import Point
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from src.prediction import (
     load_grilla,
@@ -18,12 +19,16 @@ from src.hazard import (
     compute_hazard_pressure,
     compute_hazard_morphology,
     compute_hazard_index,
-    hazard_label
+    hazard_label,
+    compute_hazard_morphology_from_props
 )
 from src.ecology import (
     load_ecology_models,
     build_cell_dataframe,
-    predict_ecological_impact
+    predict_ecological_impact,
+    predict_ecological_impact_index,
+    predict_hazard_coherence,
+    load_ecology_models_index
 )
 # CONFIGURACIÓN BÁSICA
 
@@ -184,6 +189,12 @@ ECO_PERC = {
         "medium": 147,
         "high": 464,
     }
+}
+WEIGHTS = {
+    "fibers": 1.0,
+    "fragments": 0.7,
+    "spheres": 0.4,
+    "others": 0.2
 }
 
 # FUNCIONES AUXILIARES
@@ -809,14 +820,572 @@ elif mode == "Análisis por capas":
         st.dataframe(mp_gdf.head(200))
 
     elif capa == "Hazard":
+
         st.header("Análisis del Hazard Index")
 
-        fig, ax = plt.subplots()
-        ax.hist(hazard_gdf["hazard_index"], bins=40)
+        st.markdown(
+            """
+            En esta sección se analiza cómo se comporta el **Hazard Index**, un indicador
+            que resume el riesgo potencial asociado a los microplásticos en el océano.
+
+            El objetivo no es evaluar un punto concreto, sino **entender qué valores son habituales,
+            de qué depende el índice y cómo debe interpretarse**.
+            """
+        )
+
+        # =========================================================
+        # 1. ¿Qué es el Hazard Index?
+        # =========================================================
+
+        st.subheader("¿Qué es el Hazard Index?")
+
+        st.markdown(
+            """
+            El **Hazard Index** es una medida normalizada entre **0 (riesgo bajo)** y
+            **1 (riesgo alto)** que combina:
+
+            - La **cantidad de microplásticos** presentes (presión)
+            - La **composición morfológica** de esos microplásticos
+
+            Permite comparar regiones oceánicas en términos de **riesgo potencial**,
+            pero **no representa un impacto ecológico directo**.
+            """
+        )
+
+        # =========================================================
+        # 2. Distribución global
+        # =========================================================
+
+        st.subheader("¿Qué valores del Hazard Index son habituales?")
+
+        hazard_values = hazard_gdf["hazard_index"].dropna().values
+
+        fig, ax = plt.subplots(figsize=(5, 3))
+        ax.hist(hazard_values, bins=30, alpha=0.75)
+        ax.axvline(np.percentile(hazard_values, 75), linestyle="--", label="Percentil 75")
+        ax.axvline(np.percentile(hazard_values, 90), linestyle=":", label="Percentil 90")
+        ax.set_xlabel("Hazard Index")
+        ax.set_ylabel("Frecuencia")
+        ax.legend()
+
         st.pyplot(fig)
 
-        st.dataframe(hazard_gdf[["hazard_index"]].describe())
+        st.markdown(
+            """
+            La mayoría de las regiones oceánicas presentan valores bajos o moderados.
+            Los valores altos son menos frecuentes y representan situaciones más extremas.
+            """
+        )
 
+        # =========================================================
+        # 3. Dependencia con presión y morfología
+        # =========================================================
+
+        st.subheader("¿De qué depende el Hazard Index?")
+
+        col1, col2 = st.columns(2)
+
+        # ---------------------------------------------------------
+        # 3.1 Presión
+        # ---------------------------------------------------------
+
+        with col1:
+            st.markdown("### Relación con la cantidad de microplásticos")
+
+            x = hazard_gdf["hazard_pressure"]
+            y = hazard_gdf["hazard_index"]
+
+            fig, ax = plt.subplots()
+            ax.scatter(x, y, s=10, alpha=0.4)
+
+            # LOWESS
+            smoothed = lowess(y, x, frac=0.3)
+
+            ax.plot(smoothed[:, 0], smoothed[:, 1], color="red", linewidth=2)
+            ax.set_xlabel("Presión por microplásticos (normalizada)")
+            ax.set_ylabel("Hazard Index")
+
+            st.pyplot(fig)
+
+            st.caption(
+                "A mayor presión por microplásticos, mayor Hazard Index en promedio, "
+                "aunque con variabilidad."
+            )
+
+        # ---------------------------------------------------------
+        # 3.2 Morfología
+        # ---------------------------------------------------------
+
+        with col2:
+            st.markdown("### Influencia de la composición morfológica")
+
+            x = hazard_gdf["hazard_morphology"]
+            y = hazard_gdf["hazard_index"]
+
+            fig, ax = plt.subplots()
+            ax.scatter(x, y, s=10, alpha=0.4, color="darkgreen")
+
+            smoothed = lowess(y, x, frac=0.3)
+            ax.plot(smoothed[:, 0], smoothed[:, 1], color="black", linewidth=2)
+
+            ax.set_xlabel("Composición morfológica (índice)")
+            ax.set_ylabel("Hazard Index")
+
+            st.pyplot(fig)
+
+            st.caption(
+                "La composición morfológica introduce diferencias claras en el nivel de riesgo, "
+                "incluso con cantidades similares de microplásticos."
+            )
+
+        # =========================================================
+        # 4. BLOQUE INTERACTIVO — MORFOLOGÍA (CON PESOS EXPLÍCITOS)
+        # =========================================================
+
+        st.subheader("🧩 ¿Cómo influye la composición de formas?")
+
+        st.markdown(
+            """
+            La **composición morfológica** depende de la proporción relativa
+            de distintas formas de microplásticos.
+
+            No todas las formas contribuyen por igual al riesgo potencial:
+            algunas tienen **mayor peso** que otras.
+            """
+        )
+
+        col1, col2 = st.columns(2)
+
+        # -------------------------------
+        # Sliders (suma automática = 100)
+        # -------------------------------
+        with col1:
+            fibers = st.slider("Fibras", 0, 100, 40)
+            fragments = st.slider("Fragmentos", 0, 100 - fibers, 30)
+            spheres = st.slider(
+                "Esferas",
+                0,
+                100 - fibers - fragments,
+                20
+            )
+
+        others = 100 - (fibers + fragments + spheres)
+
+        proportions = {
+            "fibers": fibers / 100,
+            "fragments": fragments / 100,
+            "spheres": spheres / 100,
+            "others": others / 100,
+        }
+
+        # -------------------------------
+        # Índice morfológico
+        # -------------------------------
+        hazard_morph_user = compute_hazard_morphology_from_props(proportions)
+
+        # -------------------------------
+        # Contribución ponderada
+        # -------------------------------
+        weighted_contrib = {
+            k: proportions[k] * WEIGHTS[k]
+            for k in proportions
+        }
+
+        with col2:
+            st.metric(
+                "Índice morfológico resultante",
+                f"{hazard_morph_user:.2f}"
+            )
+
+            fig, ax = plt.subplots(figsize=(4, 3))
+            ax.bar(
+                weighted_contrib.keys(),
+                weighted_contrib.values(),
+                color=["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
+            )
+            ax.set_ylabel("Contribución al riesgo morfológico")
+            ax.set_ylim(0, 1)
+            ax.set_title("Contribución ponderada por forma")
+
+            st.pyplot(fig)
+
+        # -------------------------------
+        # Texto explicativo NO TÉCNICO
+        # -------------------------------
+
+        st.markdown(
+            """
+            **¿Por qué algunas barras llegan más alto que otras?**
+
+            Aunque dos formas estén presentes en la misma proporción,
+            **no contribuyen igual al riesgo potencial**.
+
+            - Las **fibras** tienen el mayor peso relativo, por lo que
+            su contribución puede alcanzar valores cercanos al **100%**
+            del riesgo morfológico.
+            - Los **fragmentos** tienen un peso intermedio, por lo que su
+            contribución máxima es menor (alrededor del **60–70%**).
+            - Las **esferas** y otros tipos tienen pesos más bajos y,
+            por tanto, su contribución al riesgo es menor, incluso si
+            están presentes en cantidades similares.
+
+            Este enfoque permite reflejar que **no todas las formas de
+            microplásticos tienen el mismo potencial de riesgo**.
+            """
+        )
+
+        st.info(
+            "Este análisis muestra únicamente el **componente morfológico del riesgo**. "
+            "El Hazard Index completo combina este componente con la cantidad total "
+            "de microplásticos presente."
+        )
+
+
+        # =========================================================
+        # 5. CONTRIBUCIÓN RELATIVA (GRÁFICO REAL)
+        # =========================================================
+
+        st.subheader("⚖️ Contribución relativa de presión y morfología")
+
+        st.markdown(
+            """
+            El Hazard Index surge de la combinación de **presión por microplásticos**
+            y **composición morfológica**.
+
+            Las curvas siguientes muestran cómo varía el Hazard Index observado
+            cuando cambia cada componente.
+            """
+        )
+
+        fig, ax = plt.subplots(figsize=(5, 3))
+
+        sm_p = lowess(
+            hazard_gdf["hazard_index"],
+            hazard_gdf["hazard_pressure"],
+            frac=0.3
+        )
+        sm_m = lowess(
+            hazard_gdf["hazard_index"],
+            hazard_gdf["hazard_morphology"],
+            frac=0.3
+        )
+
+        ax.plot(sm_p[:, 0], sm_p[:, 1], label="Variación con la presión", linewidth=2)
+        ax.plot(sm_m[:, 0], sm_m[:, 1], label="Variación con la morfología", linewidth=2)
+
+        ax.set_xlabel("Componente del índice (escala propia)")
+        ax.set_ylabel("Hazard Index")
+        ax.legend()
+
+        st.pyplot(fig)
+
+        st.caption(
+            "Ambos factores contribuyen al riesgo potencial, de forma complementaria."
+        )
+        # =========================================================
+        # 6. CALCULADORA INTERACTIVA DEL HAZARD INDEX
+        # =========================================================
+
+        st.subheader("🧮 Calculadora del Hazard Index")
+
+        st.markdown(
+            """
+            En este apartado puedes **explorar cómo se obtiene un valor del Hazard Index**
+            a partir de sus dos componentes principales:
+
+            - **Presión por microplásticos** (cantidad)
+            - **Composición morfológica** (tipo de microplásticos)
+
+            El valor calculado se compara con los valores **realmente observados**
+            en el océano.
+            """
+        )
+
+        # ---------------------------------------------------------
+        # Input: presión por microplásticos
+        # ---------------------------------------------------------
+
+        st.markdown("### 1️⃣ Presión por microplásticos")
+
+        # Usamos el rango observado real
+        p_min = hazard_gdf["hazard_pressure"].min()
+        p_max = hazard_gdf["hazard_pressure"].max()
+
+        hazard_pressure_user = st.slider(
+            "Nivel de presión por microplásticos (normalizado)",
+            min_value=float(p_min),
+            max_value=float(p_max),
+            value=float(np.median(hazard_gdf["hazard_pressure"])),
+            step=0.01,
+        )
+
+        st.caption(
+            "Este valor representa la cantidad relativa de microplásticos, "
+            "normalizada a partir de observaciones reales."
+        )
+
+        # ---------------------------------------------------------
+        # Input: morfología (ya calculada antes)
+        # ---------------------------------------------------------
+
+        st.markdown("### 2️⃣ Composición morfológica")
+
+        st.write(
+            f"Índice presión morfológico seleccionado: **{hazard_morph_user:.2f}**"
+        )
+
+        # ---------------------------------------------------------
+        # Cálculo del Hazard Index
+        # ---------------------------------------------------------
+
+        # ⚠️ IMPORTANTE:
+        # Usamos la misma función lógica que en la construcción del índice.
+        # Aquí asumimos combinación multiplicativa normalizada.
+        hazard_morph_user = float(hazard_morph_user)
+        hazard_pressure_user = float(hazard_pressure_user)
+
+        hazard_index_user = (
+            0.5 * hazard_pressure_user
+            + 0.5 * hazard_morph_user
+        )
+
+        # ---------------------------------------------------------
+        # Interpretación
+        # ---------------------------------------------------------
+
+        st.markdown("### 📊 Resultado")
+
+        # Percentil respecto a valores observados
+        hazard_dist = hazard_gdf["hazard_index"].dropna().values
+        percentile = (hazard_dist < hazard_index_user).mean() * 100
+
+        st.metric(
+            label="Hazard Index estimado",
+            value=f"{hazard_index_user:.2f}",
+        )
+
+        # Clasificación semántica (coherente con Jenks)
+        if hazard_index_user <= np.percentile(hazard_dist, 33):
+            label = "Bajo"
+            color = "green"
+        elif hazard_index_user <= np.percentile(hazard_dist, 66):
+            label = "Medio"
+            color = "orange"
+        else:
+            label = "Alto"
+            color = "red"
+
+        st.markdown(
+            f"""
+            **Nivel estimado:**  
+            <span style="color:{color}; font-weight:600;">{label}</span>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            f"""
+            Este valor se sitúa aproximadamente en el **percentil {percentile:.1f}**
+            del Hazard Index observado en el océano.
+            """
+        )
+
+        # ---------------------------------------------------------
+        # Nota explicativa final
+        # ---------------------------------------------------------
+
+        st.info(
+            """
+            Este resultado es **explicativo**, no predictivo.
+
+            Muestra cómo la combinación de presión y composición morfológica
+            se traduce en un valor del Hazard Index, utilizando la misma lógica
+            empleada en su construcción original.
+            """
+        )
+
+    ###############################################
     elif capa == "Ecología":
-        st.info("Capa ecológica en desarrollo.")
 
+        st.header("Implicaciones ecológicas potenciales")
+
+        st.markdown(
+            """
+            En esta sección puedes explorar las implicaciones ecológicas
+            asociadas a **un determinado nivel de Hazard Index**.
+
+            No es necesario haber calculado previamente el índice:
+            puedes introducir directamente un valor.
+            """
+        )
+
+        # =========================================================
+        # INPUT PRINCIPAL — HAZARD INDEX
+        # =========================================================
+
+        hazard_values = hazard_gdf["hazard_index"].dropna().values
+
+        hazard_index = st.slider(
+            "Hazard Index",
+            min_value=float(hazard_values.min()),
+            max_value=float(hazard_values.max()),
+            value=float(np.median(hazard_values)),
+            step=0.01,
+            help="Índice normalizado entre 0 (bajo) y 1 (alto)"
+        )
+
+        # =========================================================
+        # VARIABLES ECOLÓGICAS BASE (MODO NO EXPLORATORIO)
+        # =========================================================
+
+        eco_count = 0
+        eco_shape_richness = 2
+        eco_mean_size = 0
+        eco_small_ratio = 0
+        log_dist_m = 0
+        eco_dist_m = 0
+
+        # =========================================================
+        # PREDICCIÓN ECOLÓGICA BASE (MODELO INDEX)
+        # =========================================================
+
+        eco_result = predict_ecological_impact_index(
+            hazard_index=hazard_index,
+            eco_count=eco_count,
+            eco_shape_richness=eco_shape_richness,
+            eco_mean_size=eco_mean_size,
+            eco_small_ratio=eco_small_ratio,
+            log_dist_m=log_dist_m,
+            eco_dist_m=eco_dist_m,
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.metric(
+                "Riesgo ecológico medio esperado",
+                f"{eco_result['iucn_mean_risk']:.2f} / 4"
+            )
+
+        with col2:
+            st.metric(
+                "Especies vulnerables potencialmente afectadas",
+                f"{eco_result['species_count']:.1f}"
+            )
+
+        st.caption(
+            "Resultados basados en patrones globales. "
+            "Interpretar a escala regional."
+        )
+
+        # =========================================================
+        # EXPLORACIÓN DE ESCENARIOS ECOLÓGICOS
+        # =========================================================
+
+        st.subheader("🔎 Exploración de escenarios ecológicos")
+
+        explore = st.checkbox(
+            "Explorar escenarios ecológicos alternativos",
+            help=(
+                "Permite explorar cómo cambiarían las implicaciones ecológicas "
+                "si el contexto ecológico local fuese distinto al observado."
+            )
+        )
+
+        if explore:
+            st.markdown(
+                """
+                ⚠️ **Modo exploratorio activo**
+
+                Los valores definidos a continuación representan **escenarios
+                hipotéticos plausibles**, no observaciones reales.
+                """
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                eco_count = st.slider(
+                    "Presencia de especies vulnerables (eco_count)",
+                    0, 500, 150
+                )
+
+            with col2:
+                eco_shape_richness = st.slider(
+                    "Diversidad morfológica de microplásticos",
+                    2, 4, 3
+                )
+
+            eco_result = predict_ecological_impact_index(
+                hazard_index=hazard_index,
+                mp_real=hazard_index,  # proxy si no quieres exponer mp_real
+                morphology={
+                    "fibers": 0.25,
+                    "fragments": 0.25,
+                    "spheres": 0.25,
+                    "others": 0.25,
+                },
+                eco_count=eco_count,
+                eco_shape_richness=eco_shape_richness,
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.metric(
+                    "Riesgo ecológico (escenario exploratorio)",
+                    f"{eco_result['iucn_mean_risk']:.2f} / 4"
+                )
+
+            with col2:
+                st.metric(
+                    "Especies vulnerables esperadas",
+                    f"{eco_result['species_count']:.1f}"
+                )
+
+        # =========================================================
+        # CONTEXTUALIZACIÓN GLOBAL
+        # =========================================================
+
+        st.subheader("📊 Contextualización global del riesgo")
+
+        risk_dist = hazard_gdf["iucn_mean_risk"].dropna().values
+        percentile = (risk_dist < eco_result["iucn_mean_risk"]).mean() * 100
+
+        fig, ax = plt.subplots(figsize=(5, 3))
+        ax.hist(risk_dist, bins=30, alpha=0.7)
+        ax.axvline(eco_result["iucn_mean_risk"], color="red", linewidth=2)
+        ax.set_xlabel("Riesgo ecológico medio observado")
+        ax.set_ylabel("Frecuencia")
+
+        st.pyplot(fig)
+
+        st.markdown(
+            f"""
+            Este valor se sitúa aproximadamente en el
+            **percentil {percentile:.1f}** del riesgo ecológico observado
+            a escala global.
+            """
+        )
+
+        # =========================================================
+        # COHERENCIA ECOLÓGICA OBSERVADA (MODELO A)
+        # =========================================================
+
+        st.subheader("🧩 Coherencia ecológica observada")
+
+        hazard_prob = predict_hazard_coherence(
+            eco_shape_richness=eco_shape_richness,
+            eco_count=eco_count,
+        )
+
+        st.metric(
+            "Probabilidad de hazard elevado",
+            f"{hazard_prob:.2f}"
+        )
+
+        st.caption(
+            "Este resultado refleja patrones observados de co-ocurrencia "
+            "entre contexto ecológico y presión por microplásticos. "
+            "No implica causalidad."
+        )
