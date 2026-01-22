@@ -318,9 +318,36 @@ def get_iucn_risk_distribution():
 def get_ecology_models():
     return load_ecology_models()
 
-# INTERACCIÓN CAPA 1
+
 if mode == "Flujo interactivo":
     st.header("Selección espacial")
+    st.sidebar.markdown(
+        "<h2 style=color:#1f77b4;'>Inputs del escenario</h2>",
+        unsafe_allow_html=True
+    )
+
+    st.sidebar.markdown(
+        """
+        <div style="
+            font-size: 12px;
+            color: #777777;
+            line-height: 1.4;
+        ">
+            Define aquí el escenario de riesgo asociado al punto seleccionado.
+            <br><br>
+            <ul style="padding-left: 16px; margin: 0;">
+                <li>Selecciona un punto en el mapa.</li>
+                <li>Revisa la concentración estimada de microplásticos.</li>
+                <li>Elige la composición morfológica.</li>
+                <li>Interpreta riesgo e implicaciones ecológicas.</li>
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.sidebar.divider()
+    # INTERACCIÓN CAPA 1
     # Construir mapa inicial
     m = build_map(gdf_continuo)
 
@@ -469,86 +496,89 @@ if mode == "Flujo interactivo":
     st.header("Índice de riesgo por microplásticos")
 
     st.write(
-        "Dado el mismo nivel de microplásticos, explora cómo cambia"
+        "Dado el mismo nivel de microplásticos, explora cómo cambia "
         "el riesgo potencial al modificar su composición morfológica"
     )
-
-    st.sidebar.subheader("Composición morfológica dominante")
     
-    profile = st.sidebar.selectbox(
-        "Selecciona un perfil",
-        [
-            "Dominio de fibras",
-            "Dominio de fragmentos",
-            "Dominio de esferas",
-            "Mezcla equilibrada",
-            "Personalizado"
-        ]
-    )
+    has_point = st.session_state.get("clicked_point") is not None
+    if has_point:
+        st.sidebar.header("Hazard Index")
+        st.sidebar.subheader("Composición morfológica dominante")
+        
+        profile = st.sidebar.selectbox(
+            "Selecciona un perfil",
+            [
+                "Dominio de fibras",
+                "Dominio de fragmentos",
+                "Dominio de esferas",
+                "Mezcla equilibrada",
+                "Personalizado"
+            ]
+        )
     
-    proportions_ready = True
+        proportions_ready = True
 
-    if profile == "Dominio de fibras":
-        proportions = {"fibers": 0.7, "fragments": 0.15, "spheres": 0.1, "others": 0.05}
+        if profile == "Dominio de fibras":
+            proportions = {"fibers": 0.7, "fragments": 0.15, "spheres": 0.1, "others": 0.05}
 
-    elif profile == "Dominio de fragmentos":
-        proportions = {"fibers": 0.15, "fragments": 0.7, "spheres": 0.1, "others": 0.05}
+        elif profile == "Dominio de fragmentos":
+            proportions = {"fibers": 0.15, "fragments": 0.7, "spheres": 0.1, "others": 0.05}
 
-    elif profile == "Dominio de esferas":
-        proportions = {"fibers": 0.1, "fragments": 0.15, "spheres": 0.7, "others": 0.05}
+        elif profile == "Dominio de esferas":
+            proportions = {"fibers": 0.1, "fragments": 0.15, "spheres": 0.7, "others": 0.05}
 
-    elif profile == "Mezcla equilibrada":
-        proportions = {"fibers": 0.25, "fragments": 0.25, "spheres": 0.25, "others": 0.25}
+        elif profile == "Mezcla equilibrada":
+            proportions = {"fibers": 0.25, "fragments": 0.25, "spheres": 0.25, "others": 0.25}
 
-    elif profile == "Personalizado":
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            fibers = st.sidebar.slider("Fibras", 0, 100, 40)
-            fragments = st.sidebar.slider("Fragmentos", 0, 100, 30)
-        with col2:
-            spheres = st.sidebar.slider("Esferas", 0, 100, 20)
-            others = st.sidebar.slider("Otros", 0, 100, 10)
-        total = fibers + fragments + spheres + others
-        if total != 100:
-            proportions_ready = False
+        elif profile == "Personalizado":
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                fibers = st.sidebar.slider("Fibras", 0, 100, 40)
+                fragments = st.sidebar.slider("Fragmentos", 0, 100, 30)
+            with col2:
+                spheres = st.sidebar.slider("Esferas", 0, 100, 20)
+                others = st.sidebar.slider("Otros", 0, 100, 10)
+            total = fibers + fragments + spheres + others
+            if total != 100:
+                proportions_ready = False
+            else:
+                proportions = {
+                "fibers": fibers / 100,
+                "fragments": fragments / 100,
+                "spheres": spheres / 100,
+                "others": others / 100
+            }
+
+        hazard_ready = (
+            st.session_state.mp_real is not None
+            and proportions_ready
+        )
+
+        if not hazard_ready:
+            if st.session_state.mp_real is None:
+                st.info("Selecciona un punto en el mapa para obtener microplásticos.")
+            if not proportions_ready:
+                st.sidebar.warning("La suma de las proporciones debe ser 100%.")
         else:
-            proportions = {
-            "fibers": fibers / 100,
-            "fragments": fragments / 100,
-            "spheres": spheres / 100,
-            "others": others / 100
-        }
+            # 🔄 recalcular solo si está invalidado
+            if st.session_state.hazard_index is None:
+                mp_real = st.session_state.mp_real
 
-    hazard_ready = (
-        st.session_state.mp_real is not None
-        and proportions_ready
-    )
+                hazard_pressure = compute_hazard_pressure(
+                    mp_concentration=mp_real,
+                    ref_max=MP_REF_P90
+                )
+                
+                hazard_morphology = compute_hazard_morphology(proportions)
+                st.session_state.hazard_index = compute_hazard_index(
+                    hazard_pressure,
+                    hazard_morphology
+                )
+                st.write("DEBUG hazard_pressure:", hazard_pressure)
+                st.write("DEBUG hazard_morphology:", hazard_morphology)
 
-    if not hazard_ready:
-        if st.session_state.mp_real is None:
-            st.info("Selecciona un punto en el mapa para obtener microplásticos.")
-        if not proportions_ready:
-            st.sidebar.warning("La suma de las proporciones debe ser 100%.")
-    else:
-        # 🔄 recalcular solo si está invalidado
-        if st.session_state.hazard_index is None:
-            mp_real = st.session_state.mp_real
-
-            hazard_pressure = compute_hazard_pressure(
-                mp_concentration=mp_real,
-                ref_max=MP_REF_P90
-            )
-            
-            hazard_morphology = compute_hazard_morphology(proportions)
-            st.session_state.hazard_index = compute_hazard_index(
-                hazard_pressure,
-                hazard_morphology
-            )
-            st.write("DEBUG hazard_pressure:", hazard_pressure)
-            st.write("DEBUG hazard_morphology:", hazard_morphology)
-
-        hazard_index = st.session_state.hazard_index
-        label = hazard_label(hazard_index)
+            hazard_index = st.session_state.hazard_index
+            label = hazard_label(hazard_index)
     # Visualización
         st.subheader("Hazard Index")
 
