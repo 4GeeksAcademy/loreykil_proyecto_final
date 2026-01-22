@@ -814,4 +814,3 @@ elif mode == "Análisis por capas":
 
     elif capa == "Ecología":
         st.info("Capa ecológica en desarrollo.")
-
