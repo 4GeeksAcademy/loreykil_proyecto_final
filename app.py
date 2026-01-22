@@ -861,12 +861,76 @@ elif mode == "Análisis por capas":
 
     if capa == "Microplásticos":
         st.header("Análisis de microplásticos")
+        st.markdown(
+            """
+            Esta sección explor los datos observados de microplásticos en el océano.
+            """
+        )
 
-        fig, ax = plt.subplots()
-        ax.hist(mp_gdf["microplastics_measurement"].dropna(), bins=40)
-        st.pyplot(fig)
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "Distribución",
+            "Costa",
+            "Ambiente",
+            "Mapa observado",
+            "Clusters"
+        ])
 
-        st.dataframe(mp_gdf.head(200))
+        # TAB 1: Distribución
+        with tab1:
+            st.subheader("Distribución de concentraciones")
+            scale = st.radio(
+                "Escala",
+                ["Lineal", "Logarítmica"],
+                horizontal=True,
+                help=(
+                    "La escala logarítmica se utiliza porque las concentraciones de microplásticos "
+                    "presentan valores extremos. Esta escala permite visualizar mejor "
+                    "la distribución general sin que los valores muy altos dominen el gráfico."
+
+                )
+            )
+            
+            data = mp_gdf["microplastics_measurement"].dropna()
+            if scale == "Logarítmica":
+                data = data[data > 0]
+                plot_data = np.log10(data)
+                xlabel = "Log₁₀(Microplásticos items/m³)"
+            else:
+                plot_data = data
+                xlabel = "Microplásticos items/m³"
+            
+            fig, ax = plt.subplots()
+            ax.hist(
+                plot_data,
+                bins=40,
+                color="#1f77b4",
+                alpha=0.8
+            )
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Frecuencia")
+
+            st.pyplot(fig)
+
+            with st.expander("¿Cómo interpretar este histograma?"):
+                st.markdown(
+                    """
+                    - La mayoría de las observaciones se concentran en valores bajos.
+                    - Existen valores extremos (hotspots) con concentraciones muy elevadas.
+                    - La escala logarítmica ayuda a visualizar mejor la distribución general.
+                    """
+                )
+
+            st.markdown(
+                f"""
+                - Número de muestras: **{len(mp_gdf["microplastics_measurement"].dropna())}**
+                - Concentración media: **{mp_gdf["microplastics_measurement"].mean():.2f} items/m³**
+                - Concentración mediana: **{mp_gdf["microplastics_measurement"].median():.2f} items/m³**
+                - Percentil 90: **{np.percentile(mp_gdf["microplastics_measurement"].dropna(), 90):.2f} items/m³**
+                """
+            )
+
+        
+            st.dataframe(mp_gdf.head(200))
 
     elif capa == "Hazard":
         st.header("Análisis del Hazard Index")
