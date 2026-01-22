@@ -30,6 +30,9 @@ from src.ecology import (
 if "mp_real" not in st.session_state:
     st.session_state.mp_real = None
 
+if "clicked_point" not in st.session_state:
+    st.session_state.clicked_point = None
+
 if "hazard_index" not in st.session_state:
     st.session_state.hazard_index = None
 
@@ -191,7 +194,6 @@ ECO_PERC = {
 def normalize(value, vmin, vmax):
     return max(0, min(1, (value - vmin) / (vmax - vmin)))
 
-@st.cache_resource
 def build_map(_gdf_continuo):
     # Mapa base (centrado global)
     m = folium.Map(
@@ -223,6 +225,15 @@ def build_map(_gdf_continuo):
     # Leyenda
     colormap.add_to(m)
     return m
+
+def add_click_marker(m, lat, lon):
+    folium.CircleMarker(
+        location=[lat, lon],
+        radius=6,
+        color="black",
+        weight=2
+    ).add_to(m)
+
 
 @st.cache_data
 def compute_profile_means(_gdf_continuo, profile_col="profile_eco"):
@@ -310,18 +321,37 @@ def get_ecology_models():
 # INTERACCIÓN CAPA 1
 if mode == "Flujo interactivo":
     st.header("Selección espacial")
+    # Construir mapa inicial
     m = build_map(gdf_continuo)
 
-    # Render del mapa en Streamlit
+    if st.session_state.clicked_point is not None:
+        add_click_marker(
+            m,
+            st.session_state.clicked_point["lat"],
+            st.session_state.clicked_point["lon"]
+        )
+
     map_data = st_folium(
         m,
         width=700,
         height=450
     )
-    # Obtener coordenadas del clic del usuario
+
+    # Actualizar punto clicado. Aquí solo se guarda el click más reciente
     if map_data and map_data.get("last_clicked"):
-        lat = map_data["last_clicked"]["lat"]
-        lon = map_data["last_clicked"]["lng"]
+        new_point = {
+            "lat": map_data["last_clicked"]["lat"],
+            "lon": map_data["last_clicked"]["lng"]
+        }
+        # Solo actualizar si es diferente
+        if st.session_state.clicked_point != new_point:
+            st.session_state.clicked_point = new_point
+            st.session_state.hazard_index = None  # invalidar hazard al cambiar de punto
+            st.rerun()
+        
+    if st.session_state.clicked_point is not None:
+        lat = st.session_state.clicked_point["lat"]
+        lon = st.session_state.clicked_point["lon"]
 
         st.success(f"Punto seleccionado: lat={lat:.3f}, lon={lon:.3f}")
 
@@ -399,9 +429,9 @@ if mode == "Flujo interactivo":
 
             # Añadirlo como una variable más
             env_vars = result['environmental_variables'].copy()
-            env_vars["ocean_profile"] = ocean_profile
             st.session_state.env_vars = env_vars
             profile_name = ocean_profile
+
             env_mean = profile_means.loc[profile_name].to_dict()
             fig = plot_oceanographic_radar(
                 env_point=env_vars,
