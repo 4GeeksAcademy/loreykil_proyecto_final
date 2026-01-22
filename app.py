@@ -73,7 +73,7 @@ def get_hazard_gdf():
 
 @st.cache_data
 def get_mp_gdf():
-    return gpd.read_file("./data/GeoDataFrame/gdf_microplastics.gpkg")
+    return gpd.read_file("./data/grid_ocean/gdf_microplastics_with_env.gpkg")
 
 model = get_model()
 grilla = get_grilla()
@@ -932,6 +932,155 @@ elif mode == "Análisis por capas":
         
             st.dataframe(mp_gdf.head(200))
 
+        # TAB 2: Costa
+        with tab2:
+            st.subheader("Microplásticos y distancia a la costa")
+            
+            st.markdown(
+                "Comparación de concentraciones según la proximidad a la costa."
+            )
+
+            bins = [0, 50, 200, np.inf]
+            labels = ["0-50 km", "51-200 km", ">200 km"]
+
+            mp_gdf["coastal_band"] = pd.cut(
+                mp_gdf["distance_to_coast_km"],
+                bins=bins,
+                labels=labels,
+            )
+            # Transformación logarítmica para visualización
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
+
+            fig, ax = plt.subplots()
+            
+            mp_gdf.boxplot(
+                column="log_microplastics",
+                by="coastal_band",
+                ax=ax,
+                grid=False,
+                showfliers=True
+            )
+
+            ax.set_xlabel("Distancia a la costa")
+            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_title("Concentración de microplásticos según distancia a la costa")
+            plt.suptitle("")
+
+            st.pyplot(fig)
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                    - Se utiliza una escala logarítmica para reducir la influencia de valores extremos.
+                    - Las tres categorías muestran concentraciones bajas en la mayoría de observaciones
+                    - Sin embargo, existen valores extremos en todas las distancias.
+                    - Distribución asimétrica. Hotspots localizados.                   
+                    """
+                )
+
+        # TAB 3: Ambiente
+        with tab3:
+            st.subheader("Microplásticos y variables ambientales")
+
+            st.markdown(
+                "Explora cómo varían las concentraciones de microplásticos "
+                "en función de las variables ambientales medidas."
+            )
+
+            env_var = st.selectbox(
+                "Selecciona una variable ambiental",
+                FEATURES,
+                index=0
+            )
+
+            st.caption(
+                "Las relaciones mostradas son exploratorias y no implican causalidad."
+            )
+
+            mp_gdf = mp_gdf.copy()
+            mp_df = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_df["log_microplastics"] = np.log10(mp_df["microplastics_measurement"])
+
+            fig, ax = plt.subplots()
+
+            ax.scatter(
+                mp_df[env_var],
+                mp_df["log_microplastics"],
+                alpha=0.5,
+                s=20,
+                color="#1f77b4"
+            )
+            ax.set_xlabel(f"{ENV_VARS_META[env_var]['label']}")
+            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_title(
+                f"Microplásticos vs {ENV_VARS_META[env_var]['label']}"
+            )
+
+            st.pyplot(fig)
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                    - Las concentraciones de microplásticos no están controladas por una única 
+                    variable ambiental. Su distribución refleja la superposición de 
+                    múltiples procesos, fuentes, transporte, mezcla y acumulación, que generan 
+                    patrones complejos y heterogéneos.
+                    """
+                )
+        # TAB 4: Mapa observado
+        with tab4:
+            st.subheader("Distribución espacial observada")
+
+            st.markdown(
+                """
+                Este mapa muestra la localización de las muestras de microplásticos utilizados en el análisis.
+                Cada punto representa una observación puntual.
+                """
+            )
+
+            # Preparar datos
+            mp_gdf = mp_gdf.copy()
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
+            import pydeck as pdk
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=mp_gdf,
+                get_position="[lon, lat]",
+                get_radius=30000,
+                get_fill_color="[log_microplastics * 30 + 100, 100, 160, 160]",
+                pickable=True,
+            )
+
+            view_state = pdk.ViewState(
+                latitude=mp_gdf["lat"].mean(),
+                longitude=mp_gdf["lon"].mean(),
+                zoom=2,
+            )
+
+            st.pydeck_chart(
+                pdk.Deck(
+                    layers=[layer],
+                    initial_view_state=view_state,
+                    tooltip={
+                        "text": "Microplásticos (log₁₀): {log_microplastics}"
+                    },
+                )
+            )
+            with st.expander("Ver tabla de datos"):
+                st.dataframe(
+                    mp_gdf[[
+                        "lat",
+                        "lon",
+                        "microplastics_measurement",
+                        "log_microplastics"
+                    ]].head(200)
+                )
+
+            
+        
+            
     elif capa == "Hazard":
         st.header("Análisis del Hazard Index")
 
