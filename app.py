@@ -79,7 +79,9 @@ mp_gdf = get_mp_gdf()
 hazard_gdf = get_hazard_gdf()
 
 mp_observed = mp_gdf["microplastics_measurement"].dropna().values
-MP_REF_P95 = np.percentile(mp_observed, 95)
+MP_REF_P90 = np.percentile(mp_observed, 90)
+
+
 
 # CONFIGURACIÖN SEMÁNTICA
 
@@ -453,6 +455,7 @@ if mode == "Flujo interactivo":
             "Personalizado"
         ]
     )
+    
     proportions_ready = True
 
     if profile == "Dominio de fibras":
@@ -503,14 +506,16 @@ if mode == "Flujo interactivo":
 
             hazard_pressure = compute_hazard_pressure(
                 mp_concentration=mp_real,
-                ref_max=MP_REF_P95
+                ref_max=MP_REF_P90
             )
-
+            
             hazard_morphology = compute_hazard_morphology(proportions)
             st.session_state.hazard_index = compute_hazard_index(
                 hazard_pressure,
                 hazard_morphology
             )
+            st.write("DEBUG hazard_pressure:", hazard_pressure)
+            st.write("DEBUG hazard_morphology:", hazard_morphology)
 
         hazard_index = st.session_state.hazard_index
         label = hazard_label(hazard_index)

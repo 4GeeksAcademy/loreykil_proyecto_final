@@ -10,10 +10,10 @@ WEIGHTS = {
 }
 
 def compute_hazard_pressure(mp_concentration: float, ref_max: float) -> float:
-    # ref_max definido empíricamente (percentil 95)
+    # ref_min y ref_max definidos empíricamente (percentiles 5 y 95)
     if ref_max <= 0:
         return 0.0
-    return float(np.clip(mp_concentration/ref_max, 0, 1))
+    return float(np.clip(mp_concentration / ref_max, 0, 1))
 
 def compute_hazard_morphology(proportions: dict) -> float:
     """
