@@ -42,15 +42,12 @@ st.set_page_config(
 )
 
 st.title("Título de la App")
-mode = st.radio(
+st.sidebar.markdown("## Modo de visualización")
+mode = st.sidebar.radio(
     "",
     ["Flujo interactivo", "Análisis por capas"],
-    horizontal=True
 )
-st.write(
-    "Selecciona un punto del océano para estimar la concentración "
-    "esperada de microplásticos a partir de las condiciones oceánicas reales."
-)
+
 
 
 # CARGA DE RECURSOS
@@ -349,6 +346,10 @@ if mode == "Flujo interactivo":
     st.sidebar.divider()
     # INTERACCIÓN CAPA 1
     # Construir mapa inicial
+    st.write(
+    "Selecciona un punto del océano para estimar la concentración "
+    "esperada de microplásticos a partir de las condiciones oceánicas reales."
+    )
     m = build_map(gdf_continuo)
 
     if st.session_state.clicked_point is not None:
@@ -854,11 +855,11 @@ if mode == "Flujo interactivo":
 
 elif mode == "Análisis por capas":
 
-    st.sidebar.header("Capas")
 
-    capa = st.sidebar.radio(
+    capa = st.radio(
         "",
-        ["Microplásticos", "Hazard", "Ecología"]
+        ["Microplásticos", "Hazard", "Ecología"],
+        horizontal=True
     )
 
     if capa == "Microplásticos":
