@@ -47,3 +47,9 @@ def hazard_label(HI: float) -> str:
         return "Alto"
     else:
         return "Muy Alto"
+    
+def compute_hazard_morphology_from_props(proportions, weights=WEIGHTS):
+    return sum(
+        proportions[k] * weights[k]
+        for k in proportions
+    )
