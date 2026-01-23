@@ -656,8 +656,10 @@ if mode == "Flujo interactivo":
     mp_real = st.session_state.mp_real
     rf_risk, rf_species = get_ecology_models()
     # Checkbox para activar exploración
+    
+    st.sidebar.markdown("## Escenario ecológico")
 
-    explore_ecology = st.checkbox(
+    explore_ecology = st.sidebar.checkbox(
         "Explorar escenarios ecológicos alternativos",
         help=(
             "Permite explorar cómo cambiarían las implicaciones ecológicas "
@@ -675,15 +677,15 @@ if mode == "Flujo interactivo":
     eco_overrides = {}
 
     if explore_ecology:
-        st.subheader("Escenario ecológico hipotético")
+        st.sidebar.markdown("### Escenario ecológico hipotético")
 
-        richness_level = st.selectbox(
+        richness_level = st.sidebar.selectbox(
             "Tamaño relativo de los ítems presentes",
             ["0-57 µm", "58-147 µm", "148-464 µm"],
             index=1
         )
 
-        complexity_level = st.selectbox(
+        complexity_level = st.sidebar.selectbox(
             "Cantidad de formas de microplásticos presentes",
             [2, 3, 4],
             index=1
@@ -1084,8 +1086,8 @@ elif mode == "Análisis por capas":
 
             st.markdown(
                 """
-                Explora cómo varían las concentraciones de microplásticos "
-                "según los perfiles ambientales oceánicos definidos.
+                Explora cómo varían las concentraciones de microplásticos
+                según los perfiles ambientales oceánicos definidos.
                 """
             )
 
