@@ -1786,7 +1786,7 @@ elif mode == "Análisis por capas":
             eco_result_risk = predict_ecological_impact_index(
                 hazard_index=hazard_index,
                 mp_real=mp_real,
-                morphology=weighted_morphology,
+                morphology=proportions,
                 eco_count=eco_count,
                 eco_shape_richness=eco_shape_richness,
                 eco_mean_size=eco_mean_size,
