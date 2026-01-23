@@ -9,4 +9,7 @@ pandas
 plotly
 branca
 scikit-learn
-matplotlip
+matplotlib
+src.prediction
+src.hazard
+src.ecology

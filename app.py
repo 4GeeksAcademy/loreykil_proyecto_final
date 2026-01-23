@@ -8,7 +8,6 @@ from streamlit_folium import st_folium
 import folium
 import plotly.graph_objects as go
 from shapely.geometry import Point
-import textwrap
 
 from src.prediction import (
     load_grilla,
