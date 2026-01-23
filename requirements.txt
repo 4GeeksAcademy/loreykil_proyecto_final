@@ -10,6 +10,4 @@ plotly
 branca
 scikit-learn
 matplotlib
-src.prediction
-src.hazard
-src.ecology
+statsmodels
