@@ -194,6 +194,24 @@ HAZARD_CARD = """
   <div style="font-size:16px;"><b>Nivel:</b> {label}</div>
 </div>
 """
+MORPHOLOGY_VISUALS = {
+    "Dominio de fibras": {
+        "title": "Fibras",
+        "description": "Microplásticos alargados, asociados frecuentemente a textiles sintéticos.",
+        "image": "data/ecotaxa/images/fibra.jpg"
+    },
+    "Dominio de fragmentos": {
+        "title": "Fragmentos",
+        "description": "Partículas irregulares procedentes de la fragmentación de plásticos mayores.",
+        "image": "data/ecotaxa/images/fragmento.jpg"
+    },
+    "Dominio de esferas": {
+        "title": "Esferas",
+        "description": "Microesferas plásticas, históricamente usadas en cosméticos y abrasivos.",
+        "image": "data/ecotaxa/images/esfera.jpg"
+    },
+}
+
 
 
 # FUNCIONES AUXILIARES
@@ -314,6 +332,26 @@ def plot_oceanographic_radar(env_point, env_mean, profile_name):
     ))
 
     return fig
+
+def show_morphology_mix_images():
+    st.sidebar.markdown("**Mezcla de morfologías**")
+    st.sidebar.caption(
+        "Distribución combinada de las principales formas de microplásticos."
+    )
+
+    cols = st.sidebar.columns(2)
+
+    images = [
+        ("Fibras", "data/ecotaxa/images/fibra.jpg"),
+        ("Fragmentos", "data/ecotaxa/images/fragmento.jpg"),
+        ("Esferas", "data/ecotaxa/images/esfera.jpg"),
+        ("Otros", "data/ecotaxa/images/otro.jpg"),
+    ]
+
+    for i, (label, path) in enumerate(images):
+        with cols[i % 2]:
+            st.image(path, caption=label, width=130)
+
 @st.cache_data
 def get_iucn_risk_distribution():
     gdf_risk = gpd.read_file(
@@ -529,6 +567,23 @@ if mode == "Flujo interactivo":
                 "Personalizado"
             ]
         )
+        st.sidebar.markdown("---")
+
+
+        if profile in MORPHOLOGY_VISUALS:
+            visual = MORPHOLOGY_VISUALS[profile]
+
+            st.sidebar.markdown(f"**{visual['title']}**")
+            st.sidebar.image(
+                visual["image"],
+                width=260
+            )
+            st.sidebar.caption(visual["description"])
+
+        elif profile in ["Mezcla equilibrada", "Personalizado"]:
+            show_morphology_mix_images()
+
+
     
         proportions_ready = True
 
@@ -585,8 +640,6 @@ if mode == "Flujo interactivo":
                     hazard_pressure,
                     hazard_morphology
                 )
-                st.write("DEBUG hazard_pressure:", hazard_pressure)
-                st.write("DEBUG hazard_morphology:", hazard_morphology)
 
             hazard_index = st.session_state.hazard_index
             label = hazard_label(hazard_index)
