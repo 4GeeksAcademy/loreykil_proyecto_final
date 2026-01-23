@@ -8,6 +8,7 @@ from streamlit_folium import st_folium
 import folium
 import plotly.graph_objects as go
 from shapely.geometry import Point
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from src.prediction import (
     load_grilla,
