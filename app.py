@@ -1078,6 +1078,65 @@ elif mode == "Análisis por capas":
                     ]].head(200)
                 )
 
+        # TAB 5: Clusters
+        with tab5:
+            st.subheader("Microplásticos y perfiles ambientales")
+
+            st.markdown(
+                """
+                Explora cómo varían las concentraciones de microplásticos "
+                "según los perfiles ambientales oceánicos definidos.
+                """
+            )
+
+            mp_gdf = mp_gdf.copy()
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
+
+            fig, ax = plt.subplots()
+
+            # Ordenar clusters para que el gráfico sea estable
+            clusters = sorted(mp_gdf["profile_eco"].dropna().unique())
+
+            ax.boxplot(
+                [
+                    mp_gdf.loc[mp_gdf["profile_eco"] == c, "log_microplastics"]
+                    for c in clusters
+                ],
+                labels=[f'{PROFILE_LABELS.get(c, c)}' for c in clusters],
+                showfliers=True
+            )
+
+            ax.set_xlabel("Perfil ambiental oceánico")
+            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_title("Concentración de microplásticos según perfil ambiental")
+
+            st.pyplot(fig)
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                     - Cada caja representa la distribución de microplásticos dentro de un perfil ambiental.
+                     - Los clusters agrupan puntos con condiciones ambientales similares.
+                     - Algunos perfiles muestran concentraciones típicas más altas o mayor variabilidad.
+                     - Estas diferencias no implican causalidad directa, sino asociaciones contextuales.
+                    """
+                )
+
+            # Tabla resumen
+            summary = (
+                mp_gdf.groupby("profile_eco")["microplastics_measurement"]
+                .agg(
+                    n_observations="count",
+                    median="median",
+                    mean="mean",
+                )
+                .reset_index()
+            )
+
+            with st.expander("Ver resumen por cluster"):
+                st.dataframe(summary)
+
             
         
             
