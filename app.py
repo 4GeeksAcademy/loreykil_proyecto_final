@@ -9,6 +9,7 @@ import folium
 import plotly.graph_objects as go
 from shapely.geometry import Point
 from statsmodels.nonparametric.smoothers_lowess import lowess
+import textwrap
 
 from src.prediction import (
     load_grilla,
@@ -35,6 +36,9 @@ from src.ecology import (
 if "mp_real" not in st.session_state:
     st.session_state.mp_real = None
 
+if "clicked_point" not in st.session_state:
+    st.session_state.clicked_point = None
+
 if "hazard_index" not in st.session_state:
     st.session_state.hazard_index = None
 
@@ -44,15 +48,12 @@ st.set_page_config(
 )
 
 st.title("Título de la App")
-mode = st.radio(
+st.sidebar.markdown("## Modo de visualización")
+mode = st.sidebar.radio(
     "",
     ["Flujo interactivo", "Análisis por capas"],
-    horizontal=True
 )
-st.write(
-    "Selecciona un punto del océano para estimar la concentración "
-    "esperada de microplásticos a partir de las condiciones oceánicas reales."
-)
+
 
 
 # CARGA DE RECURSOS
@@ -75,7 +76,7 @@ def get_hazard_gdf():
 
 @st.cache_data
 def get_mp_gdf():
-    return gpd.read_file("./data/GeoDataFrame/gdf_microplastics.gpkg")
+    return gpd.read_file("./data/grid_ocean/gdf_microplastics_with_env.gpkg")
 
 model = get_model()
 grilla = get_grilla()
@@ -190,6 +191,33 @@ ECO_PERC = {
         "high": 464,
     }
 }
+
+HAZARD_CARD = """
+<div style="border:1px solid #e6e6e6;border-radius:10px;padding:20px;min-height:220px;">
+  <div style="font-size:14px;color:#666;">Riesgo potencial por microplásticos</div>
+  <div style="font-size:48px;font-weight:600;margin:10px 0;">{value:.2f}</div>
+  <div style="font-size:16px;"><b>Nivel:</b> {label}</div>
+</div>
+"""
+MORPHOLOGY_VISUALS = {
+    "Dominio de fibras": {
+        "title": "Fibras",
+        "description": "Microplásticos alargados, asociados frecuentemente a textiles sintéticos.",
+        "image": "data/ecotaxa/images/fibra.jpg"
+    },
+    "Dominio de fragmentos": {
+        "title": "Fragmentos",
+        "description": "Partículas irregulares procedentes de la fragmentación de plásticos mayores.",
+        "image": "data/ecotaxa/images/fragmento.jpg"
+    },
+    "Dominio de esferas": {
+        "title": "Esferas",
+        "description": "Microesferas plásticas, históricamente usadas en cosméticos y abrasivos.",
+        "image": "data/ecotaxa/images/esfera.jpg"
+    },
+}
+
+
 WEIGHTS = {
     "fibers": 1.0,
     "fragments": 0.7,
@@ -202,7 +230,6 @@ WEIGHTS = {
 def normalize(value, vmin, vmax):
     return max(0, min(1, (value - vmin) / (vmax - vmin)))
 
-@st.cache_resource
 def build_map(_gdf_continuo):
     # Mapa base (centrado global)
     m = folium.Map(
@@ -234,6 +261,15 @@ def build_map(_gdf_continuo):
     # Leyenda
     colormap.add_to(m)
     return m
+
+def add_click_marker(m, lat, lon):
+    folium.CircleMarker(
+        location=[lat, lon],
+        radius=6,
+        color="black",
+        weight=2
+    ).add_to(m)
+
 
 @st.cache_data
 def compute_profile_means(_gdf_continuo, profile_col="profile_eco"):
@@ -307,6 +343,26 @@ def plot_oceanographic_radar(env_point, env_mean, profile_name):
     ))
 
     return fig
+
+def show_morphology_mix_images():
+    st.sidebar.markdown("**Mezcla de morfologías**")
+    st.sidebar.caption(
+        "Distribución combinada de las principales formas de microplásticos."
+    )
+
+    cols = st.sidebar.columns(2)
+
+    images = [
+        ("Fibras", "data/ecotaxa/images/fibra.jpg"),
+        ("Fragmentos", "data/ecotaxa/images/fragmento.jpg"),
+        ("Esferas", "data/ecotaxa/images/esfera.jpg"),
+        ("Otros", "data/ecotaxa/images/otro.jpg"),
+    ]
+
+    for i, (label, path) in enumerate(images):
+        with cols[i % 2]:
+            st.image(path, caption=label, width=130)
+
 @st.cache_data
 def get_iucn_risk_distribution():
     gdf_risk = gpd.read_file(
@@ -318,21 +374,71 @@ def get_iucn_risk_distribution():
 def get_ecology_models():
     return load_ecology_models()
 
-# INTERACCIÓN CAPA 1
+
 if mode == "Flujo interactivo":
     st.header("Selección espacial")
+    st.sidebar.markdown(
+        "<h2 style=color:#1f77b4;'>Inputs del escenario</h2>",
+        unsafe_allow_html=True
+    )
+
+    st.sidebar.markdown(
+        """
+        <div style="
+            font-size: 12px;
+            color: #777777;
+            line-height: 1.4;
+        ">
+            Define aquí el escenario de riesgo asociado al punto seleccionado.
+            <br><br>
+            <ul style="padding-left: 16px; margin: 0;">
+                <li>Selecciona un punto en el mapa.</li>
+                <li>Revisa la concentración estimada de microplásticos.</li>
+                <li>Elige la composición morfológica.</li>
+                <li>Interpreta riesgo e implicaciones ecológicas.</li>
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.sidebar.divider()
+    # INTERACCIÓN CAPA 1
+    # Construir mapa inicial
+    st.write(
+    "Selecciona un punto del océano para estimar la concentración "
+    "esperada de microplásticos a partir de las condiciones oceánicas reales."
+    )
     m = build_map(gdf_continuo)
 
-    # Render del mapa en Streamlit
+    if st.session_state.clicked_point is not None:
+        add_click_marker(
+            m,
+            st.session_state.clicked_point["lat"],
+            st.session_state.clicked_point["lon"]
+        )
+
     map_data = st_folium(
         m,
-        width=700,
-        height=450
+        width=900,
+        height=520
     )
-    # Obtener coordenadas del clic del usuario
+
+    # Actualizar punto clicado. Aquí solo se guarda el click más reciente
     if map_data and map_data.get("last_clicked"):
-        lat = map_data["last_clicked"]["lat"]
-        lon = map_data["last_clicked"]["lng"]
+        new_point = {
+            "lat": map_data["last_clicked"]["lat"],
+            "lon": map_data["last_clicked"]["lng"]
+        }
+        # Solo actualizar si es diferente
+        if st.session_state.clicked_point != new_point:
+            st.session_state.clicked_point = new_point
+            st.session_state.hazard_index = None  # invalidar hazard al cambiar de punto
+            st.rerun()
+        
+    if st.session_state.clicked_point is not None:
+        lat = st.session_state.clicked_point["lat"]
+        lon = st.session_state.clicked_point["lon"]
 
         st.success(f"Punto seleccionado: lat={lat:.3f}, lon={lon:.3f}")
 
@@ -410,9 +516,9 @@ if mode == "Flujo interactivo":
 
             # Añadirlo como una variable más
             env_vars = result['environmental_variables'].copy()
-            env_vars["ocean_profile"] = ocean_profile
             st.session_state.env_vars = env_vars
             profile_name = ocean_profile
+
             env_mean = profile_means.loc[profile_name].to_dict()
             fig = plot_oceanographic_radar(
                 env_point=env_vars,
@@ -450,133 +556,162 @@ if mode == "Flujo interactivo":
     st.header("Índice de riesgo por microplásticos")
 
     st.write(
-        "Dado el mismo nivel de microplásticos, explora cómo cambia"
+        "Dado el mismo nivel de microplásticos, explora cómo cambia "
         "el riesgo potencial al modificar su composición morfológica"
     )
-
-    st.sidebar.subheader("Composición morfológica dominante")
     
-    profile = st.sidebar.selectbox(
-        "Selecciona un perfil",
-        [
-            "Dominio de fibras",
-            "Dominio de fragmentos",
-            "Dominio de esferas",
-            "Mezcla equilibrada",
-            "Personalizado"
-        ]
-    )
-    
-    proportions_ready = True
-
-    if profile == "Dominio de fibras":
-        proportions = {"fibers": 0.7, "fragments": 0.15, "spheres": 0.1, "others": 0.05}
-
-    elif profile == "Dominio de fragmentos":
-        proportions = {"fibers": 0.15, "fragments": 0.7, "spheres": 0.1, "others": 0.05}
-
-    elif profile == "Dominio de esferas":
-        proportions = {"fibers": 0.1, "fragments": 0.15, "spheres": 0.7, "others": 0.05}
-
-    elif profile == "Mezcla equilibrada":
-        proportions = {"fibers": 0.25, "fragments": 0.25, "spheres": 0.25, "others": 0.25}
-
-    elif profile == "Personalizado":
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            fibers = st.sidebar.slider("Fibras", 0, 100, 40)
-            fragments = st.sidebar.slider("Fragmentos", 0, 100, 30)
-        with col2:
-            spheres = st.sidebar.slider("Esferas", 0, 100, 20)
-            others = st.sidebar.slider("Otros", 0, 100, 10)
-        total = fibers + fragments + spheres + others
-        if total != 100:
-            proportions_ready = False
-        else:
-            proportions = {
-            "fibers": fibers / 100,
-            "fragments": fragments / 100,
-            "spheres": spheres / 100,
-            "others": others / 100
-        }
-
-    hazard_ready = (
-        st.session_state.mp_real is not None
-        and proportions_ready
-    )
-
-    if not hazard_ready:
-        if st.session_state.mp_real is None:
-            st.info("Selecciona un punto en el mapa para obtener microplásticos.")
-        if not proportions_ready:
-            st.sidebar.warning("La suma de las proporciones debe ser 100%.")
+    has_point = st.session_state.get("clicked_point") is not None
+    if not has_point:
+        st.info("Selecciona un punto en el mapa para obtener microplásticos.")
+        hazard_index = None
     else:
-        # 🔄 recalcular solo si está invalidado
-        if st.session_state.hazard_index is None:
-            mp_real = st.session_state.mp_real
-
-            hazard_pressure = compute_hazard_pressure(
-                mp_concentration=mp_real,
-                ref_max=MP_REF_P90
-            )
-            
-            hazard_morphology = compute_hazard_morphology(proportions)
-            st.session_state.hazard_index = compute_hazard_index(
-                hazard_pressure,
-                hazard_morphology
-            )
-            st.write("DEBUG hazard_pressure:", hazard_pressure)
-            st.write("DEBUG hazard_morphology:", hazard_morphology)
-
-        hazard_index = st.session_state.hazard_index
-        label = hazard_label(hazard_index)
-    # Visualización
-        st.subheader("Hazard Index")
-
-        st.metric(
-            label="Riesgo potencial por microplásticos",
-            value=f"{hazard_index:.2f}",
-            help="Índice normalizado entre 0 y 1"
+        st.sidebar.header("Hazard Index")
+        st.sidebar.subheader("Composición morfológica dominante")
+        
+        profile = st.sidebar.selectbox(
+            "Selecciona un perfil",
+            [
+                "Dominio de fibras",
+                "Dominio de fragmentos",
+                "Dominio de esferas",
+                "Mezcla equilibrada",
+                "Personalizado"
+            ]
         )
+        st.sidebar.markdown("---")
 
-        st.write(f"**Nivel:** {label}")
-        st.progress(hazard_index)
 
-    # Gráfico de indicador
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=hazard_index,
-            domain={'x': [0, 1], 'y': [0, 1]},
-            gauge={
-                'axis': {'range': [0, 1]},
-                'bar': {'color': "darkblue"},
-                'steps': [
-                    {'range': [0, 0.33], 'color': "green"},
-                    {'range': [0.33, 0.66], 'color': "orange"},
-                    {'range': [0.66, 1], 'color': "red"}
-                ],
+        if profile in MORPHOLOGY_VISUALS:
+            visual = MORPHOLOGY_VISUALS[profile]
+
+            st.sidebar.markdown(f"**{visual['title']}**")
+            st.sidebar.image(
+                visual["image"],
+                width=260
+            )
+            st.sidebar.caption(visual["description"])
+
+        elif profile in ["Mezcla equilibrada", "Personalizado"]:
+            show_morphology_mix_images()
+
+
+    
+        proportions_ready = True
+
+        if profile == "Dominio de fibras":
+            proportions = {"fibers": 0.7, "fragments": 0.15, "spheres": 0.1, "others": 0.05}
+
+        elif profile == "Dominio de fragmentos":
+            proportions = {"fibers": 0.15, "fragments": 0.7, "spheres": 0.1, "others": 0.05}
+
+        elif profile == "Dominio de esferas":
+            proportions = {"fibers": 0.1, "fragments": 0.15, "spheres": 0.7, "others": 0.05}
+
+        elif profile == "Mezcla equilibrada":
+            proportions = {"fibers": 0.25, "fragments": 0.25, "spheres": 0.25, "others": 0.25}
+
+        elif profile == "Personalizado":
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                fibers = st.sidebar.slider("Fibras", 0, 100, 40)
+                fragments = st.sidebar.slider("Fragmentos", 0, 100, 30)
+            with col2:
+                spheres = st.sidebar.slider("Esferas", 0, 100, 20)
+                others = st.sidebar.slider("Otros", 0, 100, 10)
+            total = fibers + fragments + spheres + others
+            if total != 100:
+                proportions_ready = False
+            else:
+                proportions = {
+                "fibers": fibers / 100,
+                "fragments": fragments / 100,
+                "spheres": spheres / 100,
+                "others": others / 100
             }
-        ))
+
+        # Validación de estados
+        if st.session_state.mp_real is None:
+            hazard_index = None
+        elif not proportions_ready:
+            st.sidebar.warning("La suma de las proporciones debe ser 100%.")
+            hazard_index = None
+        else:
+            # recalcular solo si está invalidado
+            if st.session_state.hazard_index is None:
+                mp_real = st.session_state.mp_real
+
+                hazard_pressure = compute_hazard_pressure(
+                    mp_concentration=mp_real,
+                    ref_max=MP_REF_P90
+                )
+                
+                hazard_morphology = compute_hazard_morphology(proportions)
+
+                st.session_state.hazard_index = compute_hazard_index(
+                    hazard_pressure,
+                    hazard_morphology
+                )
+
+            hazard_index = st.session_state.hazard_index
+            label = hazard_label(hazard_index)
+    # Visualización
+        if hazard_index is not None:
+            st.subheader("Hazard Index")
+
+            col1, col2 = st.columns([1,1])
+
+            with col1:
+                st.markdown(
+                    HAZARD_CARD.format(value=hazard_index, label=label),
+                    unsafe_allow_html=True
+                )
+                    
+            
+            with col2:
+            # Gráfico de indicador
+                fig = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=hazard_index,
+                    domain={'x': [0, 1], 'y': [0, 1]},
+                    gauge={
+                        'axis': {'range': [0, 1]},
+                        'bar': {'color': "darkblue"},
+                        'steps': [
+                            {'range': [0, 0.33], 'color': "green"},
+                            {'range': [0.33, 0.66], 'color': "orange"},
+                            {'range': [0.66, 1], 'color': "red"}
+                        ],
+                    }
+                ))
+                fig.update_layout(
+                    height=220,
+                    margin=dict(t=20, b=20, l=10, r=10)
+                )
 
 
-        st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            
 
-        # Gráfico de distribución del Hazard Index observado
+            # Gráfico de distribución del Hazard Index observado
 
-        hazard_values = hazard_gdf["hazard_index"].values
-        percentile = (hazard_values < hazard_index).mean() * 100
+            hazard_values = hazard_gdf["hazard_index"].values
+            percentile = (hazard_values < hazard_index).mean() * 100
 
-        fig, ax = plt.subplots()
-        ax.hist(hazard_values, bins=30, alpha=0.7)
-        ax.axvline(hazard_index, color="red", linewidth=2)
-        ax.set_xlabel("Hazard Index observado")
-        ax.set_ylabel("Frecuencia")
+            col1, col2, col3 = st.columns([1, 3, 1])
+            with col2:
+                fig, ax = plt.subplots(figsize=(3, 2), dpi=120)
+                ax.hist(hazard_values, bins=30, alpha=0.7)
+                ax.axvline(hazard_index, color="red", linewidth=1)
+                ax.set_xlabel("Hazard Index observado", fontsize=6)
+                ax.set_ylabel("Frecuencia", fontsize=6)
+                ax.tick_params(axis="both", labelsize=5)
 
-        st.pyplot(fig)
+                st.pyplot(fig)
 
-        st.write(
-            f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
-        )
+            st.write(
+                f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
+            )
 
     # CAPA 3
     st.header("Implicaciones ecológicas esperadas")
@@ -607,8 +742,10 @@ if mode == "Flujo interactivo":
     mp_real = st.session_state.mp_real
     rf_risk, rf_species = get_ecology_models()
     # Checkbox para activar exploración
+    
+    st.sidebar.markdown("## Escenario ecológico")
 
-    explore_ecology = st.checkbox(
+    explore_ecology = st.sidebar.checkbox(
         "Explorar escenarios ecológicos alternativos",
         help=(
             "Permite explorar cómo cambiarían las implicaciones ecológicas "
@@ -626,15 +763,15 @@ if mode == "Flujo interactivo":
     eco_overrides = {}
 
     if explore_ecology:
-        st.subheader("Escenario ecológico hipotético")
+        st.sidebar.markdown("### Escenario ecológico hipotético")
 
-        richness_level = st.selectbox(
+        richness_level = st.sidebar.selectbox(
             "Tamaño relativo de los ítems presentes",
             ["0-57 µm", "58-147 µm", "148-464 µm"],
             index=1
         )
 
-        complexity_level = st.selectbox(
+        complexity_level = st.sidebar.selectbox(
             "Cantidad de formas de microplásticos presentes",
             [2, 3, 4],
             index=1
@@ -803,22 +940,294 @@ if mode == "Flujo interactivo":
 
 elif mode == "Análisis por capas":
 
-    st.sidebar.header("Capas")
 
-    capa = st.sidebar.radio(
+    capa = st.radio(
         "",
-        ["Microplásticos", "Hazard", "Ecología"]
+        ["Microplásticos", "Hazard", "Ecología"],
+        horizontal=True
     )
 
     if capa == "Microplásticos":
         st.header("Análisis de microplásticos")
+        st.markdown(
+            """
+            Esta sección explor los datos observados de microplásticos en el océano.
+            """
+        )
 
-        fig, ax = plt.subplots()
-        ax.hist(mp_gdf["microplastics_measurement"].dropna(), bins=40)
-        st.pyplot(fig)
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "Distribución",
+            "Costa",
+            "Ambiente",
+            "Mapa observado",
+            "Clusters"
+        ])
 
-        st.dataframe(mp_gdf.head(200))
+        # TAB 1: Distribución
+        with tab1:
+            st.subheader("Distribución de concentraciones")
+            scale = st.radio(
+                "Escala",
+                ["Lineal", "Logarítmica"],
+                horizontal=True,
+                help=(
+                    "La escala logarítmica se utiliza porque las concentraciones de microplásticos "
+                    "presentan valores extremos. Esta escala permite visualizar mejor "
+                    "la distribución general sin que los valores muy altos dominen el gráfico."
 
+                )
+            )
+            
+            data = mp_gdf["microplastics_measurement"].dropna()
+            if scale == "Logarítmica":
+                data = data[data > 0]
+                plot_data = np.log10(data)
+                xlabel = "Log₁₀(Microplásticos items/m³)"
+            else:
+                plot_data = data
+                xlabel = "Microplásticos items/m³"
+            
+            fig, ax = plt.subplots()
+            ax.hist(
+                plot_data,
+                bins=40,
+                color="#1f77b4",
+                alpha=0.8
+            )
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Frecuencia")
+
+            st.pyplot(fig)
+
+            with st.expander("¿Cómo interpretar este histograma?"):
+                st.markdown(
+                    """
+                    - La mayoría de las observaciones se concentran en valores bajos.
+                    - Existen valores extremos (hotspots) con concentraciones muy elevadas.
+                    - La escala logarítmica ayuda a visualizar mejor la distribución general.
+                    """
+                )
+
+            st.markdown(
+                f"""
+                - Número de muestras: **{len(mp_gdf["microplastics_measurement"].dropna())}**
+                - Concentración media: **{mp_gdf["microplastics_measurement"].mean():.2f} items/m³**
+                - Concentración mediana: **{mp_gdf["microplastics_measurement"].median():.2f} items/m³**
+                - Percentil 90: **{np.percentile(mp_gdf["microplastics_measurement"].dropna(), 90):.2f} items/m³**
+                """
+            )
+
+        
+            st.dataframe(mp_gdf.head(200))
+
+        # TAB 2: Costa
+        with tab2:
+            st.subheader("Microplásticos y distancia a la costa")
+            
+            st.markdown(
+                "Comparación de concentraciones según la proximidad a la costa."
+            )
+
+            bins = [0, 50, 200, np.inf]
+            labels = ["0-50 km", "51-200 km", ">200 km"]
+
+            mp_gdf["coastal_band"] = pd.cut(
+                mp_gdf["distance_to_coast_km"],
+                bins=bins,
+                labels=labels,
+            )
+            # Transformación logarítmica para visualización
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
+
+            fig, ax = plt.subplots()
+            
+            mp_gdf.boxplot(
+                column="log_microplastics",
+                by="coastal_band",
+                ax=ax,
+                grid=False,
+                showfliers=True
+            )
+
+            ax.set_xlabel("Distancia a la costa")
+            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_title("Concentración de microplásticos según distancia a la costa")
+            plt.suptitle("")
+
+            st.pyplot(fig)
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                    - Se utiliza una escala logarítmica para reducir la influencia de valores extremos.
+                    - Las tres categorías muestran concentraciones bajas en la mayoría de observaciones
+                    - Sin embargo, existen valores extremos en todas las distancias.
+                    - Distribución asimétrica. Hotspots localizados.                   
+                    """
+                )
+
+        # TAB 3: Ambiente
+        with tab3:
+            st.subheader("Microplásticos y variables ambientales")
+
+            st.markdown(
+                "Explora cómo varían las concentraciones de microplásticos "
+                "en función de las variables ambientales medidas."
+            )
+
+            env_var = st.selectbox(
+                "Selecciona una variable ambiental",
+                FEATURES,
+                index=0
+            )
+
+            st.caption(
+                "Las relaciones mostradas son exploratorias y no implican causalidad."
+            )
+
+            mp_gdf = mp_gdf.copy()
+            mp_df = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_df["log_microplastics"] = np.log10(mp_df["microplastics_measurement"])
+
+            fig, ax = plt.subplots()
+
+            ax.scatter(
+                mp_df[env_var],
+                mp_df["log_microplastics"],
+                alpha=0.5,
+                s=20,
+                color="#1f77b4"
+            )
+            ax.set_xlabel(f"{ENV_VARS_META[env_var]['label']}")
+            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_title(
+                f"Microplásticos vs {ENV_VARS_META[env_var]['label']}"
+            )
+
+            st.pyplot(fig)
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                    - Las concentraciones de microplásticos no están controladas por una única 
+                    variable ambiental. Su distribución refleja la superposición de 
+                    múltiples procesos, fuentes, transporte, mezcla y acumulación, que generan 
+                    patrones complejos y heterogéneos.
+                    """
+                )
+        # TAB 4: Mapa observado
+        with tab4:
+            st.subheader("Distribución espacial observada")
+
+            st.markdown(
+                """
+                Este mapa muestra la localización de las muestras de microplásticos utilizados en el análisis.
+                Cada punto representa una observación puntual.
+                """
+            )
+
+            # Preparar datos
+            mp_gdf = mp_gdf.copy()
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
+            import pydeck as pdk
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=mp_gdf,
+                get_position="[lon, lat]",
+                get_radius=30000,
+                get_fill_color="[log_microplastics * 30 + 100, 100, 160, 160]",
+                pickable=True,
+            )
+
+            view_state = pdk.ViewState(
+                latitude=mp_gdf["lat"].mean(),
+                longitude=mp_gdf["lon"].mean(),
+                zoom=2,
+            )
+
+            st.pydeck_chart(
+                pdk.Deck(
+                    layers=[layer],
+                    initial_view_state=view_state,
+                    tooltip={
+                        "text": "Microplásticos (log₁₀): {log_microplastics}"
+                    },
+                )
+            )
+            with st.expander("Ver tabla de datos"):
+                st.dataframe(
+                    mp_gdf[[
+                        "lat",
+                        "lon",
+                        "microplastics_measurement",
+                        "log_microplastics"
+                    ]].head(200)
+                )
+
+        # TAB 5: Clusters
+        with tab5:
+            st.subheader("Microplásticos y perfiles ambientales")
+
+            st.markdown(
+                """
+                Explora cómo varían las concentraciones de microplásticos
+                según los perfiles ambientales oceánicos definidos.
+                """
+            )
+
+            mp_gdf = mp_gdf.copy()
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
+
+            fig, ax = plt.subplots()
+
+            # Ordenar clusters para que el gráfico sea estable
+            clusters = sorted(mp_gdf["profile_eco"].dropna().unique())
+
+            ax.boxplot(
+                [
+                    mp_gdf.loc[mp_gdf["profile_eco"] == c, "log_microplastics"]
+                    for c in clusters
+                ],
+                labels=[f'{PROFILE_LABELS.get(c, c)}' for c in clusters],
+                showfliers=True
+            )
+
+            ax.set_xlabel("Perfil ambiental oceánico")
+            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_title("Concentración de microplásticos según perfil ambiental")
+
+            st.pyplot(fig)
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                     - Cada caja representa la distribución de microplásticos dentro de un perfil ambiental.
+                     - Los clusters agrupan puntos con condiciones ambientales similares.
+                     - Algunos perfiles muestran concentraciones típicas más altas o mayor variabilidad.
+                     - Estas diferencias no implican causalidad directa, sino asociaciones contextuales.
+                    """
+                )
+
+            # Tabla resumen
+            summary = (
+                mp_gdf.groupby("profile_eco")["microplastics_measurement"]
+                .agg(
+                    n_observations="count",
+                    median="median",
+                    mean="mean",
+                )
+                .reset_index()
+            )
+
+            with st.expander("Ver resumen por cluster"):
+                st.dataframe(summary)
+
+            
+        
+            
     elif capa == "Hazard":
 
         st.header("Análisis del Hazard Index")
