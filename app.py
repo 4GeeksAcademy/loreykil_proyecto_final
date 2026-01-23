@@ -502,7 +502,10 @@ if mode == "Flujo interactivo":
     )
     
     has_point = st.session_state.get("clicked_point") is not None
-    if has_point:
+    if not has_point:
+        st.info("Selecciona un punto en el mapa para obtener microplásticos.")
+        hazard_index = None
+    else:
         st.sidebar.header("Hazard Index")
         st.sidebar.subheader("Composición morfológica dominante")
         
@@ -550,18 +553,14 @@ if mode == "Flujo interactivo":
                 "others": others / 100
             }
 
-        hazard_ready = (
-            st.session_state.mp_real is not None
-            and proportions_ready
-        )
-
-        if not hazard_ready:
-            if st.session_state.mp_real is None:
-                st.info("Selecciona un punto en el mapa para obtener microplásticos.")
-            if not proportions_ready:
-                st.sidebar.warning("La suma de las proporciones debe ser 100%.")
+        # Validación de estados
+        if st.session_state.mp_real is None:
+            hazard_index = None
+        elif not proportions_ready:
+            st.sidebar.warning("La suma de las proporciones debe ser 100%.")
+            hazard_index = None
         else:
-            # 🔄 recalcular solo si está invalidado
+            # recalcular solo si está invalidado
             if st.session_state.hazard_index is None:
                 mp_real = st.session_state.mp_real
 
@@ -571,6 +570,7 @@ if mode == "Flujo interactivo":
                 )
                 
                 hazard_morphology = compute_hazard_morphology(proportions)
+
                 st.session_state.hazard_index = compute_hazard_index(
                     hazard_pressure,
                     hazard_morphology
@@ -581,52 +581,53 @@ if mode == "Flujo interactivo":
             hazard_index = st.session_state.hazard_index
             label = hazard_label(hazard_index)
     # Visualización
-        st.subheader("Hazard Index")
+        if hazard_index is not None:
+            st.subheader("Hazard Index")
 
-        st.metric(
-            label="Riesgo potencial por microplásticos",
-            value=f"{hazard_index:.2f}",
-            help="Índice normalizado entre 0 y 1"
-        )
+            st.metric(
+                label="Riesgo potencial por microplásticos",
+                value=f"{hazard_index:.2f}",
+                help="Índice normalizado entre 0 y 1"
+            )
 
-        st.write(f"**Nivel:** {label}")
-        st.progress(hazard_index)
+            st.write(f"**Nivel:** {label}")
+            st.progress(hazard_index)
 
-    # Gráfico de indicador
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=hazard_index,
-            domain={'x': [0, 1], 'y': [0, 1]},
-            gauge={
-                'axis': {'range': [0, 1]},
-                'bar': {'color': "darkblue"},
-                'steps': [
-                    {'range': [0, 0.33], 'color': "green"},
-                    {'range': [0.33, 0.66], 'color': "orange"},
-                    {'range': [0.66, 1], 'color': "red"}
-                ],
-            }
-        ))
+            # Gráfico de indicador
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=hazard_index,
+                domain={'x': [0, 1], 'y': [0, 1]},
+                gauge={
+                    'axis': {'range': [0, 1]},
+                    'bar': {'color': "darkblue"},
+                    'steps': [
+                        {'range': [0, 0.33], 'color': "green"},
+                        {'range': [0.33, 0.66], 'color': "orange"},
+                        {'range': [0.66, 1], 'color': "red"}
+                    ],
+                }
+            ))
 
 
-        st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
 
-        # Gráfico de distribución del Hazard Index observado
+            # Gráfico de distribución del Hazard Index observado
 
-        hazard_values = hazard_gdf["hazard_index"].values
-        percentile = (hazard_values < hazard_index).mean() * 100
+            hazard_values = hazard_gdf["hazard_index"].values
+            percentile = (hazard_values < hazard_index).mean() * 100
 
-        fig, ax = plt.subplots()
-        ax.hist(hazard_values, bins=30, alpha=0.7)
-        ax.axvline(hazard_index, color="red", linewidth=2)
-        ax.set_xlabel("Hazard Index observado")
-        ax.set_ylabel("Frecuencia")
+            fig, ax = plt.subplots()
+            ax.hist(hazard_values, bins=30, alpha=0.7)
+            ax.axvline(hazard_index, color="red", linewidth=2)
+            ax.set_xlabel("Hazard Index observado")
+            ax.set_ylabel("Frecuencia")
 
-        st.pyplot(fig)
+            st.pyplot(fig)
 
-        st.write(
-            f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
-        )
+            st.write(
+                f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
+            )
 
     # CAPA 3
     st.header("Implicaciones ecológicas esperadas")
