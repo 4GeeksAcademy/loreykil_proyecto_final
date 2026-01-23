@@ -8,6 +8,7 @@ from streamlit_folium import st_folium
 import folium
 import plotly.graph_objects as go
 from shapely.geometry import Point
+import textwrap
 
 from src.prediction import (
     load_grilla,
@@ -186,6 +187,15 @@ ECO_PERC = {
     }
 }
 
+HAZARD_CARD = """
+<div style="border:1px solid #e6e6e6;border-radius:10px;padding:20px;min-height:220px;">
+  <div style="font-size:14px;color:#666;">Riesgo potencial por microplásticos</div>
+  <div style="font-size:48px;font-weight:600;margin:10px 0;">{value:.2f}</div>
+  <div style="font-size:16px;"><b>Nivel:</b> {label}</div>
+</div>
+"""
+
+
 # FUNCIONES AUXILIARES
 
 def normalize(value, vmin, vmax):
@@ -361,8 +371,8 @@ if mode == "Flujo interactivo":
 
     map_data = st_folium(
         m,
-        width=700,
-        height=450
+        width=900,
+        height=520
     )
 
     # Actualizar punto clicado. Aquí solo se guarda el click más reciente
@@ -584,46 +594,56 @@ if mode == "Flujo interactivo":
         if hazard_index is not None:
             st.subheader("Hazard Index")
 
-            st.metric(
-                label="Riesgo potencial por microplásticos",
-                value=f"{hazard_index:.2f}",
-                help="Índice normalizado entre 0 y 1"
-            )
+            col1, col2 = st.columns([1,1])
 
-            st.write(f"**Nivel:** {label}")
-            st.progress(hazard_index)
-
+            with col1:
+                st.markdown(
+                    HAZARD_CARD.format(value=hazard_index, label=label),
+                    unsafe_allow_html=True
+                )
+                    
+            
+            with col2:
             # Gráfico de indicador
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=hazard_index,
-                domain={'x': [0, 1], 'y': [0, 1]},
-                gauge={
-                    'axis': {'range': [0, 1]},
-                    'bar': {'color': "darkblue"},
-                    'steps': [
-                        {'range': [0, 0.33], 'color': "green"},
-                        {'range': [0.33, 0.66], 'color': "orange"},
-                        {'range': [0.66, 1], 'color': "red"}
-                    ],
-                }
-            ))
+                fig = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=hazard_index,
+                    domain={'x': [0, 1], 'y': [0, 1]},
+                    gauge={
+                        'axis': {'range': [0, 1]},
+                        'bar': {'color': "darkblue"},
+                        'steps': [
+                            {'range': [0, 0.33], 'color': "green"},
+                            {'range': [0.33, 0.66], 'color': "orange"},
+                            {'range': [0.66, 1], 'color': "red"}
+                        ],
+                    }
+                ))
+                fig.update_layout(
+                    height=220,
+                    margin=dict(t=20, b=20, l=10, r=10)
+                )
 
 
-            st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            
 
             # Gráfico de distribución del Hazard Index observado
 
             hazard_values = hazard_gdf["hazard_index"].values
             percentile = (hazard_values < hazard_index).mean() * 100
 
-            fig, ax = plt.subplots()
-            ax.hist(hazard_values, bins=30, alpha=0.7)
-            ax.axvline(hazard_index, color="red", linewidth=2)
-            ax.set_xlabel("Hazard Index observado")
-            ax.set_ylabel("Frecuencia")
+            col1, col2, col3 = st.columns([1, 3, 1])
+            with col2:
+                fig, ax = plt.subplots(figsize=(3, 2), dpi=120)
+                ax.hist(hazard_values, bins=30, alpha=0.7)
+                ax.axvline(hazard_index, color="red", linewidth=1)
+                ax.set_xlabel("Hazard Index observado", fontsize=6)
+                ax.set_ylabel("Frecuencia", fontsize=6)
+                ax.tick_params(axis="both", labelsize=5)
 
-            st.pyplot(fig)
+                st.pyplot(fig)
 
             st.write(
                 f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
