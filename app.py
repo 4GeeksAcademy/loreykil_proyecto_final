@@ -9,7 +9,6 @@ import folium
 import plotly.graph_objects as go
 from shapely.geometry import Point
 from statsmodels.nonparametric.smoothers_lowess import lowess
-import textwrap
 
 from src.prediction import (
     load_grilla,
@@ -369,6 +368,12 @@ def get_iucn_risk_distribution():
         "./data/Predicciones/risk_prediction_with_confidence.gpkg"
     )
     return gdf_risk["iucn_mean_risk"].dropna().values
+@st.cache_data
+
+def get_global_ecology_gdf():
+    return gpd.read_file(
+        "./data/Predicciones/species_count_prediction_with_confidence.gpkg"
+    )
 
 @st.cache_resource
 def get_ecology_models():
@@ -1856,15 +1861,29 @@ elif mode == "Análisis por capas":
         st.subheader("📊 Contextualización global del riesgo")
 
         risk_dist = hazard_gdf["iucn_mean_risk"].dropna().values
-        percentile = (risk_dist < eco_result_risk["iucn_mean_risk"]).mean() * 100
+        risk_value = eco_result_risk["iucn_mean_risk"]
 
-        fig, ax = plt.subplots(figsize=(5, 3))
-        ax.hist(risk_dist, bins=30, alpha=0.7)
-        ax.axvline(eco_result_risk["iucn_mean_risk"], color="red", linewidth=2)
-        ax.set_xlabel("Riesgo ecológico medio observado")
-        ax.set_ylabel("Frecuencia")
+        percentile = (risk_dist < risk_value).mean() * 100
 
-        st.pyplot(fig)
+        fig, ax = plt.subplots(figsize=(2.8, 1.9))
+
+        ax.hist(
+            risk_dist,
+            bins=22,
+            alpha=0.75,
+            color="#b0c4de"
+        )
+        ax.axvline(
+            risk_value,
+            color="red",
+            linewidth=1.2
+        )
+
+        ax.set_xlabel("Riesgo ecológico medio", fontsize=8)
+        ax.set_ylabel("Frecuencia", fontsize=8)
+        ax.tick_params(axis="both", labelsize=7)
+
+        st.pyplot(fig, use_container_width=False)
 
         st.markdown(
             f"""
@@ -1874,25 +1893,251 @@ elif mode == "Análisis por capas":
             """
         )
 
+        st.caption(
+            "Distribución basada en celdas con información ecológica observada."
+        )
+
         # =========================================================
         # COHERENCIA ECOLÓGICA OBSERVADA (MODELO A)
         # =========================================================
+        st.subheader(("🧩 COHERENCIA ECOLÓGICA OBSERVADA"))
 
-        st.subheader("🧩 Coherencia ecológica observada")
+        st.markdown("¿Es habitual observar hazard alto en este contexto ecológico?")
+
+        st.markdown(
+            """
+            Este bloque evalúa si, **dado un contexto ecológico concreto**,
+            es habitual observar **niveles elevados de presión por microplásticos**.
+
+            El resultado se basa en **patrones observados a escala global**
+            y **no implica causalidad directa**.
+            """
+        )
+
+        # ---------------------------------------------------------
+        # INPUTS ECOLÓGICOS DEL MODELO
+        # ---------------------------------------------------------
+
+        col_left, col_right = st.columns([2, 1])
+
+        with col_left:
+            eco_shape_richness = st.slider(
+                "Diversidad morfológica de microplásticos",
+                min_value=2,
+                max_value=4,
+                value=eco_shape_richness,
+                help="Número de formas distintas de microplásticos presentes"
+            )
+
+            vuln_level = st.slider(
+                "Nivel de amenaza (IUCN Red List)",  
+                min_value=1,
+                max_value=4,
+                value=2,
+                step=1,
+                help="Nivel de amenaza de las especies presentes"
+            )
+            # 🔑 Traducción ecológica coherente
+            ecotaxa_present = 1 if vuln_level >= 1 else 0
+            
+        with col_right:
+            vuln_table = pd.DataFrame({
+                "Código": [4, 3, 2, 1],
+                "Categoría IUCN": [
+                    "CR – Critically Endangered",
+                    "EN – Endangered",
+                    "VU – Vulnerable",
+                    "NT – Near Threatened"
+                ]
+            })
+
+            st.markdown("**Equivalencia IUCN**")
+            st.table(vuln_table)
+
+        # ---------------------------------------------------------
+        # CONSTRUCCIÓN DE FEATURES (MODELO A)
+        # ---------------------------------------------------------
 
         hazard_prob = predict_hazard_coherence(
             eco_shape_richness=eco_shape_richness,
-            eco_count=eco_count,
+            ecotaxa_present=ecotaxa_present,
+            vuln=vuln_level,
         )
 
+        # ---------------------------------------------------------
+        # OUTPUT
+        # ---------------------------------------------------------
+
         st.metric(
-            "Probabilidad de hazard elevado",
+            "Probabilidad de observar hazard elevado",
             f"{hazard_prob:.2f}"
         )
 
         st.caption(
-            "Este resultado refleja patrones observados de co-ocurrencia "
-            "entre contexto ecológico y presión por microplásticos. "
-            "No implica causalidad."
+            """
+            Esta probabilidad refleja **patrones de co-ocurrencia observados**
+            entre contexto ecológico y presión por microplásticos.
+
+            No representa un efecto causal ni una predicción de impacto ecológico.
+            """
         )
+
+        st.info(
+            """
+            Una probabilidad baja no implica ausencia de riesgo ecológico.
+
+            Indica que, en los datos observados, los contextos ecológicos
+            más diversos y con especies amenazadas **no suelen coincidir**
+            con niveles elevados de presión por microplásticos.
+
+            Este bloque evalúa **co-ocurrencia observada**, no impacto potencial.
+            """
+        )
+
+        # =========================================================
+        # BLOQUE FINAL — PROYECCIÓN ECOLÓGICA GLOBAL
+        # =========================================================
+
+        st.subheader("🌍 Proyección ecológica global")
+
+        st.markdown(
+            """
+            Este bloque muestra una **proyección espacial global** de las implicaciones
+            ecológicas potenciales asociadas a la presión por microplásticos.
+
+            A diferencia de los bloques anteriores, aquí **no se exploran escenarios
+            hipotéticos**, sino patrones espaciales aprendidos a partir de
+            **condiciones ambientales reales**.
+            """
+        )
+
+        # =========================================================
+        # CARGA DEL DATASET GLOBAL
+        # =========================================================
+
+        gdf_global = get_global_ecology_gdf()
+
+        # 👉 Usamos la variable proyectada (sin nulos)
+        gdf_global = gdf_global[
+            gdf_global["pred_iucn_mean_risk"].notna()
+        ].copy()
+
+        # =========================================================
+        # MAPA GLOBAL INTERACTIVO
+        # =========================================================
+
+        # Variable que colorea el mapa
+        vmin = gdf_global["pred_iucn_mean_risk"].min()
+        vmax = gdf_global["pred_iucn_mean_risk"].max()
+
+        colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
+        colormap.caption = "Riesgo ecológico medio proyectado (IUCN)"
+
+        # Mapa base
+        m = folium.Map(
+            location=[0, 0],
+            zoom_start=2,
+            tiles="CartoDB voyager"
+        )
+
+        # Submuestreo para rendimiento
+        gdf_plot = gdf_global.sample(
+            min(4000, len(gdf_global)),
+            random_state=42
+        )
+
+        # Añadir puntos al mapa (centroides de las celdas)
+        for _, row in gdf_plot.iterrows():
+            centroid = row.geometry.centroid
+            lat = centroid.y
+            lon = centroid.x
+
+            risk = row["pred_iucn_mean_risk"]
+
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=4,
+                fill=True,
+                fill_color=colormap(risk),
+                fill_opacity=0.8,
+                color=None,
+            ).add_to(m)
+
+        colormap.add_to(m)
+
+        # Render del mapa
+        map_data = st_folium(
+            m,
+            width=700,
+            height=450,
+        )
+
+        # =========================================================
+        # OUTPUT LOCAL AL HACER CLICK
+        # =========================================================
+
+        if map_data and map_data.get("last_clicked"):
+
+            lat = map_data["last_clicked"]["lat"]
+            lon = map_data["last_clicked"]["lng"]
+
+            # Buscar celda más cercana (distancia a polígonos)
+            point = gpd.GeoSeries(
+                [Point(lon, lat)],
+                crs=gdf_global.crs
+            )
+
+            distances = gdf_global.geometry.distance(point.iloc[0])
+            idx = distances.idxmin()
+            row = gdf_global.loc[idx]
+
+            st.markdown("### 📍 Resultado local")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.metric(
+                    "Riesgo ecológico medio proyectado",
+                    f"{row['pred_iucn_mean_risk']:.2f} / 4"
+                )
+
+            with col2:
+                st.metric(
+                    "Especies vulnerables potencialmente afectadas",
+                    f"{row['pred_iucn_species_count']:.1f}"
+                )
+
+            # =========================================================
+            # CONTEXTUALIZACIÓN GLOBAL
+            # =========================================================
+
+            risk_dist = gdf_global["pred_iucn_mean_risk"].values
+            percentile = (risk_dist < row["pred_iucn_mean_risk"]).mean() * 100
+
+            st.markdown(
+                f"""
+                Este valor se sitúa aproximadamente en el
+                **percentil {percentile:.1f}** del riesgo ecológico proyectado
+                a escala global.
+                """
+            )
+
+            st.caption(
+                "Valores obtenidos por extrapolación a partir de condiciones "
+                "ambientales similares a las observadas."
+            )
+
+        # =========================================================
+        # AVISO METODOLÓGICO FINAL
+        # =========================================================
+
+        st.info(
+            """
+            Esta proyección no representa observaciones directas ni impactos causales.
+
+            Muestra patrones espaciales esperables bajo condiciones ambientales
+            similares, aprendidos a partir de datos globales.
+            """
+        )
+
 
