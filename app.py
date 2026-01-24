@@ -9,6 +9,9 @@ import folium
 import plotly.graph_objects as go
 from shapely.geometry import Point
 from statsmodels.nonparametric.smoothers_lowess import lowess
+import psutil
+import os
+from folium.plugins import HeatMap
 
 from src.prediction import (
     load_grilla,
@@ -379,6 +382,17 @@ def get_global_ecology_gdf():
 def get_ecology_models():
     return load_ecology_models()
 
+@st.cache_data
+def get_land_polygons():
+    return gpd.read_file("./data/ocean/ne_10m_land.shp").to_crs(epsg=4326)
+
+
+def memory_usage_mb():
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+st.sidebar.markdown("### :brain: Uso de memoria")
+st.sidebar.write(f"{memory_usage_mb():.1f} MB")
 
 if mode == "Flujo interactivo":
     st.header("Selección espacial")
@@ -1714,7 +1728,6 @@ elif mode == "Análisis por capas":
         col_left, col_right = st.columns([2, 1])  # sliders más espacio que el gráfico
 
         with col_left:
-            st.markdown("### Composición de formas")
 
             fibers = st.slider("Fibras", 0, 100, 40)
             fragments = st.slider("Fragmentos", 0, 100 - fibers, 30)
@@ -2005,35 +2018,76 @@ elif mode == "Análisis por capas":
             Este bloque muestra una **proyección espacial global** de las implicaciones
             ecológicas potenciales asociadas a la presión por microplásticos.
 
-            A diferencia de los bloques anteriores, aquí **no se exploran escenarios
-            hipotéticos**, sino patrones espaciales aprendidos a partir de
+            A diferencia de los bloques anteriores, aquí no se exploran escenarios
+            hipotéticos, sino patrones espaciales aprendidos a partir de
             **condiciones ambientales reales**.
             """
         )
 
         # =========================================================
-        # CARGA DEL DATASET GLOBAL
+        # CARGA Y PREPARACIÓN DEL DATASET GLOBAL
         # =========================================================
 
         gdf_global = get_global_ecology_gdf()
-
-        # 👉 Usamos la variable proyectada (sin nulos)
+        land = get_land_polygons()
+    
+        # 👉 SOLO OCÉANO + valores válidos
         gdf_global = gdf_global[
-            gdf_global["pred_iucn_mean_risk"].notna()
+            (gdf_global["pred_iucn_mean_risk"].notna())
+        ].copy()
+
+        # 🔑 CLAVE: reproyección para Folium
+        if gdf_global.crs.to_epsg() != 4326:
+            gdf_global = gdf_global.to_crs(epsg=4326)
+
+        # =========================================================
+        # FILTRAR SOLO OCÉANO (QUITAR TIERRA)
+        # =========================================================
+
+        gdf_global["geometry_point"] = gdf_global.geometry.centroid
+
+        gdf_global = gdf_global[
+            ~gdf_global["geometry_point"].apply(
+                lambda p: land.contains(p).any()
+            )
         ].copy()
 
         # =========================================================
-        # MAPA GLOBAL INTERACTIVO
+        # SELECTOR DE VARIABLE PARA EL MAPA
         # =========================================================
 
-        # Variable que colorea el mapa
-        vmin = gdf_global["pred_iucn_mean_risk"].min()
-        vmax = gdf_global["pred_iucn_mean_risk"].max()
+        st.markdown("### 🎨 Variable mostrada en el mapa")
+
+        color_var_label = st.radio(
+            "",
+            [
+                "Riesgo ecológico medio (IUCN)",
+                "Especies vulnerables (escala logarítmica)"
+            ],
+            horizontal=True
+        )
+
+        if color_var_label == "Riesgo ecológico medio (IUCN)":
+            COLOR_COL = "pred_iucn_mean_risk"
+            COLOR_LABEL = "Riesgo ecológico medio proyectado (IUCN)"
+        else:
+            COLOR_COL = "pred_log_iucn_species_count"
+            COLOR_LABEL = "Especies vulnerables potencialmente afectadas (log)"
+
+        # =========================================================
+        # COLORMAP (ROBUSTO)
+        # =========================================================
+
+        vmin = gdf_global[COLOR_COL].quantile(0.02)
+        vmax = gdf_global[COLOR_COL].quantile(0.98)
 
         colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
-        colormap.caption = "Riesgo ecológico medio proyectado (IUCN)"
+        colormap.caption = COLOR_LABEL
 
-        # Mapa base
+        # =========================================================
+        # CONSTRUCCIÓN DEL MAPA (UNA SOLA VEZ)
+        # =========================================================
+
         m = folium.Map(
             location=[0, 0],
             zoom_start=2,
@@ -2046,45 +2100,94 @@ elif mode == "Análisis por capas":
             random_state=42
         )
 
-        # Añadir puntos al mapa (centroides de las celdas)
+        # =========================================================
+        # HEATMAP (GRADIENTE CONTINUO)
+        # =========================================================
+
+        heat_data = []
+
         for _, row in gdf_plot.iterrows():
             centroid = row.geometry.centroid
-            lat = centroid.y
-            lon = centroid.x
 
-            risk = row["pred_iucn_mean_risk"]
+            value = float(row[COLOR_COL])
+            if not np.isnan(value):
+                heat_data.append([
+                    centroid.y,
+                    centroid.x,
+                    value
+                ])
 
+        HeatMap(
+            heat_data,
+            gradient={
+                0.0: "#2c7bb6",
+                0.4: "#abd9e9",
+                0.6: "#ffffbf",
+                0.8: "#fdae61",
+                1.0: "#d7191c",
+            },
+            radius=25,
+            blur=30,
+            min_opacity=0.3,
+        ).add_to(m)
+
+
+        # =========================================================
+        # MARCADOR DEL CLICK (si existe)
+        # =========================================================
+
+        if "global_click" in st.session_state:
             folium.CircleMarker(
-                location=[lat, lon],
-                radius=4,
+                location=[
+                    st.session_state.global_click["lat"],
+                    st.session_state.global_click["lng"]
+                ],
+                radius=8,
+                color="black",
+                weight=2,
                 fill=True,
-                fill_color=colormap(risk),
-                fill_opacity=0.8,
-                color=None,
+                fill_color="cyan",
+                fill_opacity=1,
             ).add_to(m)
 
         colormap.add_to(m)
 
-        # Render del mapa
+        # =========================================================
+        # RENDER DEL MAPA (UNA SOLA VEZ)
+        # =========================================================
+
         map_data = st_folium(
             m,
-            width=700,
-            height=450,
+            width=900,
+            height=520,
         )
 
         # =========================================================
-        # OUTPUT LOCAL AL HACER CLICK
+        # GESTIÓN DEL CLICK
         # =========================================================
 
         if map_data and map_data.get("last_clicked"):
+            new_click = {
+                "lat": map_data["last_clicked"]["lat"],
+                "lng": map_data["last_clicked"]["lng"]
+            }
 
-            lat = map_data["last_clicked"]["lat"]
-            lon = map_data["last_clicked"]["lng"]
+            if st.session_state.get("global_click") != new_click:
+                st.session_state.global_click = new_click
+                st.rerun()
 
-            # Buscar celda más cercana (distancia a polígonos)
+        # =========================================================
+        # OUTPUT LOCAL + MINI RADAR AMBIENTAL 🔥
+        # =========================================================
+
+        if "global_click" in st.session_state:
+
+            lat = st.session_state.global_click["lat"]
+            lng = st.session_state.global_click["lng"]
+
             point = gpd.GeoSeries(
-                [Point(lon, lat)],
-                crs=gdf_global.crs
+                [Point(lng, lat)],
+                crs=4326
             )
 
             distances = gdf_global.geometry.distance(point.iloc[0])
@@ -2107,10 +2210,7 @@ elif mode == "Análisis por capas":
                     f"{row['pred_iucn_species_count']:.1f}"
                 )
 
-            # =========================================================
-            # CONTEXTUALIZACIÓN GLOBAL
-            # =========================================================
-
+            # Percentil global
             risk_dist = gdf_global["pred_iucn_mean_risk"].values
             percentile = (risk_dist < row["pred_iucn_mean_risk"]).mean() * 100
 
@@ -2122,13 +2222,38 @@ elif mode == "Análisis por capas":
                 """
             )
 
+            # -----------------------------
+            # TABLA DE VARIABLES AMBIENTALES
+            # -----------------------------
+
+            st.markdown("### 🌊 Contexto ambiental local")
+
+            env_table = []
+
+            for k in FEATURES:
+                if k in row and k in gdf_global.columns:
+                    env_table.append({
+                        "Variable": ENV_VARS_META.get(k, {}).get("label", k),
+                        "Valor local": round(float(row[k]), 3),
+                        "Promedio global": round(float(gdf_global[k].mean()), 3),
+                        "Unidad": ENV_VARS_META.get(k, {}).get("unit", "-"),
+                    })
+
+            env_df = pd.DataFrame(env_table)
+
+            st.dataframe(
+                env_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
             st.caption(
-                "Valores obtenidos por extrapolación a partir de condiciones "
-                "ambientales similares a las observadas."
+                "La tabla muestra las condiciones ambientales en el punto seleccionado "
+                "comparadas con el promedio global oceánico."
             )
 
         # =========================================================
-        # AVISO METODOLÓGICO FINAL
+        # AVISO FINAL
         # =========================================================
 
         st.info(
@@ -2139,5 +2264,6 @@ elif mode == "Análisis por capas":
             similares, aprendidos a partir de datos globales.
             """
         )
+
 
 
