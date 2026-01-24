@@ -77,14 +77,11 @@ def get_hazard_gdf():
 def get_mp_gdf():
     return gpd.read_file("./data/grid_ocean/gdf_microplastics_with_env.gpkg")
 
-model = get_model()
-grilla = get_grilla()
-gdf_continuo = get_mapa_continuo()
-mp_gdf = get_mp_gdf()
-hazard_gdf = get_hazard_gdf()
+gdf_continuo = None
+mp_gdf = None
+hazard_gdf = None
 
-mp_observed = mp_gdf["microplastics_measurement"].dropna().values
-MP_REF_P90 = np.percentile(mp_observed, 90)
+
 
 
 
@@ -242,7 +239,9 @@ def build_map(_gdf_continuo):
     colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
     colormap.caption = "Concentración estimada de microplásticos (log items/m³)"
     # Subsample
-    gdf_plot = _gdf_continuo.sample(5000, random_state=42)
+    gdf_plot = _gdf_continuo[
+        (_gdf_continuo.geometry.y.between(-60, 60))
+    ].sample(1000, random_state=42)
 
     # Overlay de microplásticos
     for _, row in gdf_plot.iterrows():
@@ -277,23 +276,23 @@ def compute_profile_means(_gdf_continuo, profile_col="profile_eco"):
         .groupby(profile_col)[FEATURES]
         .mean()
     )
-profile_means = compute_profile_means(gdf_continuo)
+@st.cache_data
+def get_profile_means():
+    gdf = get_mapa_continuo()
+    return gdf.groupby("profile_eco")[FEATURES].mean()
 
 
-def get_ocean_profile_at_point(gdf_continuo, lon, lat):
-    point = Point(lon, lat)
-    # Asegurar CRS coherente para distancias
-    if gdf_continuo.crs.is_geographic:
-        gdf_proj = gdf_continuo.to_crs(epsg=3857)
-        point_proj = gpd.GeoSeries([point], crs=4326).to_crs(epsg=3857).iloc[0]
-    else:
-        gdf_proj = gdf_continuo
-        point_proj = point
+@st.cache_data
+def get_gdf_continuo_proj():
+    return get_mapa_continuo().to_crs(epsg=3857)
 
-    distances = gdf_proj.geometry.distance(point_proj)
-    idx = distances.idxmin()
+def get_ocean_profile_at_point(gdf_proj, lon, lat):
+    point_proj = gpd.GeoSeries(
+        [Point(lon, lat)], crs=4326
+    ).to_crs(epsg=3857).iloc[0]
 
-    return gdf_continuo.loc[idx, "profile_eco"]
+    idx = gdf_proj.geometry.distance(point_proj).idxmin()
+    return gdf_proj.loc[idx, "profile_eco"]
 
 def plot_oceanographic_radar(env_point, env_mean, profile_name):
     tech_labels = FEATURES
@@ -373,8 +372,20 @@ def get_iucn_risk_distribution():
 def get_ecology_models():
     return load_ecology_models()
 
+import psutil
+import os
+
+def memory_usage_mb():
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+st.sidebar.markdown("### 🧠 Uso de memoria")
+st.sidebar.write(f"{memory_usage_mb():.1f} MB")
 
 if mode == "Flujo interactivo":
+    gdf_continuo = get_mapa_continuo()
+    mp_gdf = get_mp_gdf()
+    hazard_gdf = get_hazard_gdf()
     st.header("Selección espacial")
     st.sidebar.markdown(
         "<h2 style=color:#1f77b4;'>Inputs del escenario</h2>",
@@ -442,6 +453,8 @@ if mode == "Flujo interactivo":
         st.success(f"Punto seleccionado: lat={lat:.3f}, lon={lon:.3f}")
 
         # PREDICCIÓN
+        grilla = get_grilla()
+        model = get_model()
         result = predict_microplastics_at_point(
             lon=lon,
             lat=lat,
@@ -468,8 +481,9 @@ if mode == "Flujo interactivo":
                 st.write(f"{result['microplastics_log']:.3f}")
 
             # Extraer perfil oceanográfico desde el mapa contínuo
+            gdf_continuo_proj = get_gdf_continuo_proj()
             ocean_profile = get_ocean_profile_at_point(
-                gdf_continuo,
+                gdf_continuo_proj,
                 lon=lon,
                 lat=lat
             )
@@ -517,6 +531,7 @@ if mode == "Flujo interactivo":
             env_vars = result['environmental_variables'].copy()
             st.session_state.env_vars = env_vars
             profile_name = ocean_profile
+            profile_means = get_profile_means()
 
             env_mean = profile_means.loc[profile_name].to_dict()
             fig = plot_oceanographic_radar(
@@ -577,6 +592,14 @@ if mode == "Flujo interactivo":
                 "Personalizado"
             ]
         )
+        # Proporciones por defecto (seguras)
+        proportions = {
+            "fibers": 0.25,
+            "fragments": 0.25,
+            "spheres": 0.25,
+            "others": 0.25
+        }
+
         st.sidebar.markdown("---")
 
 
@@ -638,6 +661,9 @@ if mode == "Flujo interactivo":
             # recalcular solo si está invalidado
             if st.session_state.hazard_index is None:
                 mp_real = st.session_state.mp_real
+
+                mp_observed = mp_gdf["microplastics_measurement"].dropna().values
+                MP_REF_P90 = np.percentile(mp_observed, 90)
 
                 hazard_pressure = compute_hazard_pressure(
                     mp_concentration=mp_real,
@@ -707,6 +733,8 @@ if mode == "Flujo interactivo":
                 ax.tick_params(axis="both", labelsize=5)
 
                 st.pyplot(fig)
+                plt.close(fig)
+
 
             st.write(
                 f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
@@ -908,7 +936,7 @@ if mode == "Flujo interactivo":
     st.caption(
         "Este resultado no representa un efecto causal directo de los microplásticos sobre las especies, sino una estimación de las implicaciones ecológicas potenciales asociadas a niveles de presión por microplásticos bajo condiciones ambientales similares a las observadas"
     )
-    import matplotlib.pyplot as plt
+    
 
     fig, ax = plt.subplots()
     ax.hist(risk_dist, bins=30, alpha=0.7)
@@ -918,6 +946,8 @@ if mode == "Flujo interactivo":
     ax.set_title("Distribución global del riesgo ecológico")
 
     st.pyplot(fig)
+    plt.close(fig)
+
 
     st.write(
         f"Este valor se sitúa en el percentil **{percentile:.1f}** "
@@ -947,6 +977,9 @@ elif mode == "Análisis por capas":
     )
 
     if capa == "Microplásticos":
+        gdf_continuo = get_mapa_continuo()
+        mp_gdf = get_mp_gdf()
+        hazard_gdf = get_hazard_gdf()
         st.header("Análisis de microplásticos")
         st.markdown(
             """
@@ -997,6 +1030,8 @@ elif mode == "Análisis por capas":
             ax.set_ylabel("Frecuencia")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             with st.expander("¿Cómo interpretar este histograma?"):
                 st.markdown(
@@ -1055,6 +1090,8 @@ elif mode == "Análisis por capas":
             plt.suptitle("")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             with st.expander("¿Cómo interpretar este gráfico?"):
                 st.markdown(
@@ -1105,6 +1142,8 @@ elif mode == "Análisis por capas":
             )
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             with st.expander("¿Cómo interpretar este gráfico?"):
                 st.markdown(
@@ -1199,6 +1238,8 @@ elif mode == "Análisis por capas":
             ax.set_title("Concentración de microplásticos según perfil ambiental")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             with st.expander("¿Cómo interpretar este gráfico?"):
                 st.markdown(
@@ -1277,6 +1318,8 @@ elif mode == "Análisis por capas":
         ax.legend()
 
         st.pyplot(fig)
+        plt.close(fig)
+
 
         st.markdown(
             """
@@ -1314,6 +1357,8 @@ elif mode == "Análisis por capas":
             ax.set_ylabel("Hazard Index")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             st.caption(
                 "A mayor presión por microplásticos, mayor Hazard Index en promedio, "
@@ -1340,6 +1385,8 @@ elif mode == "Análisis por capas":
             ax.set_ylabel("Hazard Index")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             st.caption(
                 "La composición morfológica introduce diferencias claras en el nivel de riesgo, "
@@ -1416,6 +1463,8 @@ elif mode == "Análisis por capas":
             ax.set_title("Contribución ponderada por forma")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
         # -------------------------------
         # Texto explicativo NO TÉCNICO
@@ -1486,6 +1535,8 @@ elif mode == "Análisis por capas":
         ax.legend()
 
         st.pyplot(fig)
+        plt.close(fig)
+
 
         st.caption(
             "Ambos factores contribuyen al riesgo potencial, de forma complementaria."
@@ -1754,6 +1805,8 @@ elif mode == "Análisis por capas":
             ax.tick_params(axis="y", labelsize=8)
 
             st.pyplot(fig, use_container_width=False)
+            plt.close(fig)
+
 
 
         st.caption(
@@ -1864,6 +1917,8 @@ elif mode == "Análisis por capas":
         ax.set_ylabel("Frecuencia")
 
         st.pyplot(fig)
+        plt.close(fig)
+
 
         st.markdown(
             f"""
