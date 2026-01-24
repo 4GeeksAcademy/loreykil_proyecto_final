@@ -266,26 +266,16 @@ def predict_ecological_impact_index(
 
 def predict_hazard_coherence(
     eco_shape_richness,
-    eco_count,
+    ecotaxa_present,
+    vuln,
 ):
-    """
-    Evalúa si, dado un contexto ecológico, es habitual observar
-    niveles elevados de Hazard Index.
-
-    Returns
-    -------
-    float
-        Probabilidad de hazard elevado.
-    """
-
     model_hazard, _, _ = load_ecology_models_index()
 
     X = pd.DataFrame([{
         "eco_shape_richness": eco_shape_richness,
-        "ecotaxa_present": 1 if eco_count > 0 else 0,
-        "vuln": 1 if eco_count > 100 else 0,
+        "ecotaxa_present": ecotaxa_present,
+        "vuln": vuln,
     }])
 
     prob = model_hazard.predict_proba(X)[0, 1]
-
     return float(prob)
