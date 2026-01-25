@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import branca.colormap as cm
 from streamlit_folium import st_folium
 import folium
+import json
 import pydeck as pdk
 import plotly.graph_objects as go
 from shapely.geometry import Point
@@ -14,6 +15,7 @@ from statsmodels.nonparametric.smoothers_lowess import lowess
 from src.prediction import (
     load_grilla,
     load_model,
+    build_base_map,
     predict_microplastics_at_point
 )
 from src.hazard import (
@@ -65,6 +67,14 @@ def get_model():
 @st.cache_data
 def get_grilla():
     return load_grilla()
+
+@st.cache_resource
+def get_microplastics_overlay():
+    with open("data/Predicciones/microplastics_bounds.json") as f:
+        bounds = json.load(f)
+
+    image_path = "data/Predicciones/microplastics_log_est.png"
+    return image_path, bounds
 
 @st.cache_data
 def get_hazard_gdf():
@@ -379,8 +389,42 @@ if mode == "Flujo interactivo":
     if "last_processed_click" not in st.session_state:
         st.session_state.last_processed_click = None
 
-    # Construir mapa desde el estado
-    m = folium.Map(location=[0, 0], zoom_start=2, tiles="CartoDB voyager")
+    # mapa base
+    image_path, raster_bounds = get_microplastics_overlay()
+
+    m = folium.Map(
+        location=[0, 0],
+        zoom_start=2,
+        tiles=None,
+        crs="EPSG4326",
+        no_wrap=True,
+    )
+
+
+    folium.raster_layers.ImageOverlay(
+        image=image_path,
+        bounds=raster_bounds,
+        opacity=0.6,
+        name="Microplásticos (log)"
+    ).add_to(m)
+
+    control_points = {
+        "Madrid": (40.4168, -3.7038),
+        "Quito": (0.0, -78.4678),
+        "Greenwich": (51.48, 0.0),
+        "Cabo": (-33.92, 18.42)
+    }
+
+    for name, (lat, lon) in control_points.items():
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=4,
+            color="black",
+            fill=True,
+            fill_opacity=1,
+            tooltip=name
+        ).add_to(m)
+
     
     if st.session_state.clicked_point is not None:
         folium.Marker(
@@ -390,6 +434,7 @@ if mode == "Flujo interactivo":
             ],
             icon=folium.Icon(color="black", icon="dot-circle-o")
         ).add_to(m)
+
 
     # Renderizar mapa
     map_data = st_folium(
