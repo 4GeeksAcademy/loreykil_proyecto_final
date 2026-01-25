@@ -3,11 +3,11 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import branca.colormap as cm
 from streamlit_folium import st_folium
 import folium
+import json
+import pydeck as pdk
 import plotly.graph_objects as go
-from shapely.geometry import Point
 from statsmodels.nonparametric.smoothers_lowess import lowess
 import psutil
 import os
@@ -31,7 +31,6 @@ from src.ecology import (
     predict_ecological_impact,
     predict_ecological_impact_index,
     predict_hazard_coherence,
-    load_ecology_models_index
 )
 # CONFIGURACIÓN BÁSICA
 
@@ -64,30 +63,50 @@ mode = st.sidebar.radio(
 def get_model():
     return load_model()
 
-@st.cache_data
+@st.cache_resource
 def get_grilla():
     return load_grilla()
 
-@st.cache_data
-def get_mapa_continuo():
-    return gpd.read_file("./data/Predicciones/mapa_continuo.gpkg")
+@st.cache_resource
+def get_microplastics_overlay():
+    with open("data/Predicciones/microplastics_bounds.json") as f:
+        bounds = json.load(f)
 
-@st.cache_data
+    image_path = "data/Predicciones/microplastics_log_est.png"
+    return image_path, bounds
+
+@st.cache_resource
 def get_hazard_gdf():
-    return gpd.read_file("./data/grid_indice/hazard_index_grid_final.gpkg")
+    return gpd.read_file(
+        "./data/grid_indice/hazard_index_grid_final.gpkg",
+        columns=[
+            "geometry",
+            "hazard_index",
+            "hazard_pressure",
+            "hazard_morphology",
+            "mp_pieces_m3",
+            "iucn_mean_risk"
+        ]
+    )
 
-@st.cache_data
+@st.cache_resource
 def get_mp_gdf():
-    return gpd.read_file("./data/grid_ocean/gdf_microplastics_with_env.gpkg")
+    return gpd.read_file(
+        "./data/grid_ocean/gdf_microplastics_with_env.gpkg",
+        columns=[
+            "geometry",
+            "lat",
+            "lon",
+            "microplastics_measurement",
+            "profile_eco",
+            "distance_to_coast_km"
+        ]
+    )
 
-model = get_model()
-grilla = get_grilla()
-gdf_continuo = get_mapa_continuo()
-mp_gdf = get_mp_gdf()
-hazard_gdf = get_hazard_gdf()
+mp_gdf = None
+hazard_gdf = None
 
-mp_observed = mp_gdf["microplastics_measurement"].dropna().values
-MP_REF_P90 = np.percentile(mp_observed, 90)
+
 
 
 
@@ -232,71 +251,13 @@ WEIGHTS = {
 def normalize(value, vmin, vmax):
     return max(0, min(1, (value - vmin) / (vmax - vmin)))
 
-def build_map(_gdf_continuo):
-    # Mapa base (centrado global)
-    m = folium.Map(
-        location=[0, 0],
-        zoom_start=2,
-        tiles="CartoDB voyager"
-    )
-    # Colormap
-    vmin = _gdf_continuo["microplastics_log_est"].min()
-    vmax = _gdf_continuo["microplastics_log_est"].max()
-    colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
-    colormap.caption = "Concentración estimada de microplásticos (log items/m³)"
-    # Subsample
-    gdf_plot = _gdf_continuo.sample(5000, random_state=42)
-
-    # Overlay de microplásticos
-    for _, row in gdf_plot.iterrows():
-        lat = row.geometry.y
-        lon = row.geometry.x
-        color = colormap(row["microplastics_log_est"])
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=5,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.8,
-        color=None
-        ).add_to(m)
-    # Leyenda
-    colormap.add_to(m)
-    return m
-
-def add_click_marker(m, lat, lon):
-    folium.CircleMarker(
-        location=[lat, lon],
-        radius=6,
-        color="black",
-        weight=2
-    ).add_to(m)
-
 
 @st.cache_data
-def compute_profile_means(_gdf_continuo, profile_col="profile_eco"):
-    return (
-        _gdf_continuo
-        .groupby(profile_col)[FEATURES]
-        .mean()
-    )
-profile_means = compute_profile_means(gdf_continuo)
+def get_profile_means():
+    gdf = get_grilla()
+    return gdf.groupby("profile_eco")[FEATURES].mean()
 
 
-def get_ocean_profile_at_point(gdf_continuo, lon, lat):
-    point = Point(lon, lat)
-    # Asegurar CRS coherente para distancias
-    if gdf_continuo.crs.is_geographic:
-        gdf_proj = gdf_continuo.to_crs(epsg=3857)
-        point_proj = gpd.GeoSeries([point], crs=4326).to_crs(epsg=3857).iloc[0]
-    else:
-        gdf_proj = gdf_continuo
-        point_proj = point
-
-    distances = gdf_proj.geometry.distance(point_proj)
-    idx = distances.idxmin()
-
-    return gdf_continuo.loc[idx, "profile_eco"]
 
 def plot_oceanographic_radar(env_point, env_mean, profile_name):
     tech_labels = FEATURES
@@ -393,6 +354,15 @@ def memory_usage_mb():
 
 st.sidebar.markdown("### :brain: Uso de memoria")
 st.sidebar.write(f"{memory_usage_mb():.1f} MB")
+import psutil
+import os
+
+def memory_usage_mb():
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+st.sidebar.markdown("### 🧠 Uso de memoria")
+st.sidebar.write(f"{memory_usage_mb():.1f} MB")
 
 if mode == "Flujo interactivo":
     st.header("Selección espacial")
@@ -422,46 +392,100 @@ if mode == "Flujo interactivo":
     )
 
     st.sidebar.divider()
-    # INTERACCIÓN CAPA 1
-    # Construir mapa inicial
+    # INTERACCIÓN CAPA 1¡
     st.write(
     "Selecciona un punto del océano para estimar la concentración "
     "esperada de microplásticos a partir de las condiciones oceánicas reales."
     )
-    m = build_map(gdf_continuo)
+    # Estado
+    if "clicked_point" not in st.session_state:
+        st.session_state.clicked_point = None
 
-    if st.session_state.clicked_point is not None:
-        add_click_marker(
-            m,
-            st.session_state.clicked_point["lat"],
-            st.session_state.clicked_point["lon"]
-        )
+    if "last_processed_click" not in st.session_state:
+        st.session_state.last_processed_click = None
 
-    map_data = st_folium(
-        m,
-        width=900,
-        height=520
+    # mapa base
+    image_path, raster_bounds = get_microplastics_overlay()
+
+    m = folium.Map(
+        location=[0, 0],
+        zoom_start=2,
+        tiles=None,
+        crs="EPSG4326",
+        no_wrap=True,
     )
 
-    # Actualizar punto clicado. Aquí solo se guarda el click más reciente
+
+    folium.raster_layers.ImageOverlay(
+        image=image_path,
+        bounds=raster_bounds,
+        opacity=0.6,
+        name="Microplásticos (log)"
+    ).add_to(m)
+
+    control_points = {
+        "Madrid": (40.4168, -3.7038),
+        "Quito": (0.0, -78.4678),
+        "Greenwich": (51.48, 0.0),
+        "Cabo": (-33.92, 18.42)
+    }
+
+    for name, (lat, lon) in control_points.items():
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=4,
+            color="black",
+            fill=True,
+            fill_opacity=1,
+            tooltip=name
+        ).add_to(m)
+
+    
+    if st.session_state.clicked_point is not None:
+        folium.Marker(
+            location=[
+                st.session_state.clicked_point["lat"],
+                st.session_state.clicked_point["lon"]
+            ],
+            icon=folium.Icon(color="black", icon="dot-circle-o")
+        ).add_to(m)
+
+
+    # Renderizar mapa
+    map_data = st_folium(
+    m,
+    width=900,
+    height=520,
+    key="mapa_interactivo"
+    )
+
+    # Procesar click
     if map_data and map_data.get("last_clicked"):
-        new_point = {
-            "lat": map_data["last_clicked"]["lat"],
-            "lon": map_data["last_clicked"]["lng"]
-        }
-        # Solo actualizar si es diferente
-        if st.session_state.clicked_point != new_point:
-            st.session_state.clicked_point = new_point
-            st.session_state.hazard_index = None  # invalidar hazard al cambiar de punto
+        new_point = (
+            round(map_data["last_clicked"]["lat"], 6),
+            round(map_data["last_clicked"]["lng"], 6),
+        )
+
+        if st.session_state.last_processed_click != new_point:
+            st.session_state.last_processed_click = new_point
+
+            st.session_state.clicked_point = {
+                "lat": new_point[0],
+                "lon": new_point[1],
+            }
+
+            st.session_state.hazard_index = None
             st.rerun()
         
     if st.session_state.clicked_point is not None:
         lat = st.session_state.clicked_point["lat"]
         lon = st.session_state.clicked_point["lon"]
 
-        st.success(f"Punto seleccionado: lat={lat:.3f}, lon={lon:.3f}")
+        st.success(f"Punto seleccionado: lat={lat:.3f}, lon={lon:.3f}")   
 
         # PREDICCIÓN
+        grilla = get_grilla()
+        model = get_model()
         result = predict_microplastics_at_point(
             lon=lon,
             lat=lat,
@@ -469,7 +493,9 @@ if mode == "Flujo interactivo":
             model=model,
             feature_names=FEATURES
         )
-
+        ocean_profile = result["profile_eco"]
+        st.write("Índice de celda:", result["cell_index"])
+        st.write("Perfil:", result["profile_eco"])
         # OUTPUTS
 
         st.subheader("Resultado")
@@ -487,12 +513,6 @@ if mode == "Flujo interactivo":
             with st.expander("Ver valor en escala logarítmica"):
                 st.write(f"{result['microplastics_log']:.3f}")
 
-            # Extraer perfil oceanográfico desde el mapa contínuo
-            ocean_profile = get_ocean_profile_at_point(
-                gdf_continuo,
-                lon=lon,
-                lat=lat
-            )
             # Perfil ecológico
             profile_label = PROFILE_LABELS.get(ocean_profile, ocean_profile)
             color = PROFILE_COLORS.get(ocean_profile, "#999999")
@@ -537,6 +557,7 @@ if mode == "Flujo interactivo":
             env_vars = result['environmental_variables'].copy()
             st.session_state.env_vars = env_vars
             profile_name = ocean_profile
+            profile_means = get_profile_means()
 
             env_mean = profile_means.loc[profile_name].to_dict()
             fig = plot_oceanographic_radar(
@@ -597,6 +618,14 @@ if mode == "Flujo interactivo":
                 "Personalizado"
             ]
         )
+        # Proporciones por defecto (seguras)
+        proportions = {
+            "fibers": 0.25,
+            "fragments": 0.25,
+            "spheres": 0.25,
+            "others": 0.25
+        }
+
         st.sidebar.markdown("---")
 
 
@@ -658,6 +687,9 @@ if mode == "Flujo interactivo":
             # recalcular solo si está invalidado
             if st.session_state.hazard_index is None:
                 mp_real = st.session_state.mp_real
+                mp_gdf = get_mp_gdf()
+                mp_observed = mp_gdf["microplastics_measurement"].dropna().values
+                MP_REF_P90 = np.percentile(mp_observed, 90)
 
                 hazard_pressure = compute_hazard_pressure(
                     mp_concentration=mp_real,
@@ -670,6 +702,8 @@ if mode == "Flujo interactivo":
                     hazard_pressure,
                     hazard_morphology
                 )
+                
+                mp_gdf = None
 
             hazard_index = st.session_state.hazard_index
             label = hazard_label(hazard_index)
@@ -714,6 +748,7 @@ if mode == "Flujo interactivo":
 
             # Gráfico de distribución del Hazard Index observado
 
+            hazard_gdf = get_hazard_gdf()
             hazard_values = hazard_gdf["hazard_index"].values
             percentile = (hazard_values < hazard_index).mean() * 100
 
@@ -727,10 +762,16 @@ if mode == "Flujo interactivo":
                 ax.tick_params(axis="both", labelsize=5)
 
                 st.pyplot(fig)
+                plt.close(fig)
+
 
             st.write(
                 f"Este valor de riesgo se sitúa en el percentil **{100 - percentile:.1f}** del Hazard Index observado"
             )
+
+            del hazard_gdf
+            import gc
+            gc.collect()
 
     # CAPA 3
     st.header("Implicaciones ecológicas esperadas")
@@ -928,7 +969,7 @@ if mode == "Flujo interactivo":
     st.caption(
         "Este resultado no representa un efecto causal directo de los microplásticos sobre las especies, sino una estimación de las implicaciones ecológicas potenciales asociadas a niveles de presión por microplásticos bajo condiciones ambientales similares a las observadas"
     )
-    import matplotlib.pyplot as plt
+    
 
     fig, ax = plt.subplots()
     ax.hist(risk_dist, bins=30, alpha=0.7)
@@ -938,6 +979,8 @@ if mode == "Flujo interactivo":
     ax.set_title("Distribución global del riesgo ecológico")
 
     st.pyplot(fig)
+    plt.close(fig)
+
 
     st.write(
         f"Este valor se sitúa en el percentil **{percentile:.1f}** "
@@ -967,6 +1010,8 @@ elif mode == "Análisis por capas":
     )
 
     if capa == "Microplásticos":
+        mp_gdf = get_mp_gdf()
+        hazard_gdf = get_hazard_gdf()
         st.header("Análisis de microplásticos")
         st.markdown(
             """
@@ -1017,6 +1062,8 @@ elif mode == "Análisis por capas":
             ax.set_ylabel("Frecuencia")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             with st.expander("¿Cómo interpretar este histograma?"):
                 st.markdown(
@@ -1050,13 +1097,14 @@ elif mode == "Análisis por capas":
             bins = [0, 50, 200, np.inf]
             labels = ["0-50 km", "51-200 km", ">200 km"]
 
+            mp_gdf = mp_gdf.copy()
             mp_gdf["coastal_band"] = pd.cut(
                 mp_gdf["distance_to_coast_km"],
                 bins=bins,
                 labels=labels,
             )
             # Transformación logarítmica para visualización
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
             mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
 
             fig, ax = plt.subplots()
@@ -1075,6 +1123,8 @@ elif mode == "Análisis por capas":
             plt.suptitle("")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             with st.expander("¿Cómo interpretar este gráfico?"):
                 st.markdown(
@@ -1087,6 +1137,16 @@ elif mode == "Análisis por capas":
                 )
 
         # TAB 3: Ambiente
+        mp_gdf = gpd.read_file(
+            "./data/grid_ocean/gdf_microplastics_with_env.gpkg",
+            columns=[
+                "lat",
+                "lon",
+                "microplastics_measurement",
+                "profile_eco",
+                "distance_to_coast_km",
+            ] + FEATURES
+        )
         with tab3:
             st.subheader("Microplásticos y variables ambientales")
 
@@ -1125,6 +1185,8 @@ elif mode == "Análisis por capas":
             )
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             with st.expander("¿Cómo interpretar este gráfico?"):
                 st.markdown(
@@ -1148,9 +1210,9 @@ elif mode == "Análisis por capas":
 
             # Preparar datos
             mp_gdf = mp_gdf.copy()
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
             mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
-            import pydeck as pdk
+
             layer = pdk.Layer(
                 "ScatterplotLayer",
                 data=mp_gdf,
@@ -1197,7 +1259,7 @@ elif mode == "Análisis por capas":
             )
 
             mp_gdf = mp_gdf.copy()
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
             mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
 
             fig, ax = plt.subplots()
@@ -1219,6 +1281,8 @@ elif mode == "Análisis por capas":
             ax.set_title("Concentración de microplásticos según perfil ambiental")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             with st.expander("¿Cómo interpretar este gráfico?"):
                 st.markdown(
@@ -1244,10 +1308,15 @@ elif mode == "Análisis por capas":
             with st.expander("Ver resumen por cluster"):
                 st.dataframe(summary)
 
+        del mp_gdf
+        import gc
+        gc.collect()
             
         
             
     elif capa == "Hazard":
+
+        hazard_gdf = get_hazard_gdf()
 
         st.header("Análisis del Hazard Index")
 
@@ -1297,6 +1366,8 @@ elif mode == "Análisis por capas":
         ax.legend()
 
         st.pyplot(fig)
+        plt.close(fig)
+
 
         st.markdown(
             """
@@ -1334,6 +1405,8 @@ elif mode == "Análisis por capas":
             ax.set_ylabel("Hazard Index")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             st.caption(
                 "A mayor presión por microplásticos, mayor Hazard Index en promedio, "
@@ -1360,6 +1433,8 @@ elif mode == "Análisis por capas":
             ax.set_ylabel("Hazard Index")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
             st.caption(
                 "La composición morfológica introduce diferencias claras en el nivel de riesgo, "
@@ -1436,6 +1511,8 @@ elif mode == "Análisis por capas":
             ax.set_title("Contribución ponderada por forma")
 
             st.pyplot(fig)
+            plt.close(fig)
+
 
         # -------------------------------
         # Texto explicativo NO TÉCNICO
@@ -1506,6 +1583,8 @@ elif mode == "Análisis por capas":
         ax.legend()
 
         st.pyplot(fig)
+        plt.close(fig)
+
 
         st.caption(
             "Ambos factores contribuyen al riesgo potencial, de forma complementaria."
@@ -1632,9 +1711,16 @@ elif mode == "Análisis por capas":
             """
         )
 
+        del hazard_gdf
+        import gc
+        gc.collect()
+
+
     ###############################################
 
     elif capa == "Ecología":
+
+        hazard_gdf = get_hazard_gdf()
 
         st.header("Implicaciones ecológicas potenciales")
 
@@ -1773,6 +1859,8 @@ elif mode == "Análisis por capas":
             ax.tick_params(axis="y", labelsize=8)
 
             st.pyplot(fig, use_container_width=False)
+            plt.close(fig)
+
 
 
         st.caption(
@@ -1897,6 +1985,8 @@ elif mode == "Análisis por capas":
         ax.tick_params(axis="both", labelsize=7)
 
         st.pyplot(fig, use_container_width=False)
+        plt.close(fig)
+
 
         st.markdown(
             f"""

@@ -11,3 +11,4 @@ branca
 scikit-learn
 matplotlib
 statsmodels
+xgboost
