@@ -3,12 +3,13 @@ streamlit-folium
 folium
 geopandas
 shapely
-joblib
 numpy
 pandas
+matplotlib
 plotly
 branca
-scikit-learn
-matplotlib
 statsmodels
+psutil
+scikit-learn
+joblib
 xgboost

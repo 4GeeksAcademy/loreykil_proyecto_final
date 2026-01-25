@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from streamlit_folium import st_folium
 import folium
 import json
+from shapely.geometry import Point
+import branca.colormap as cm
 import pydeck as pdk
 import plotly.graph_objects as go
 from statsmodels.nonparametric.smoothers_lowess import lowess
