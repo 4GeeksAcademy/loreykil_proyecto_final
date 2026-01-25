@@ -3,19 +3,16 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import branca.colormap as cm
 from streamlit_folium import st_folium
 import folium
 import json
 import pydeck as pdk
 import plotly.graph_objects as go
-from shapely.geometry import Point
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from src.prediction import (
     load_grilla,
     load_model,
-    build_base_map,
     predict_microplastics_at_point
 )
 from src.hazard import (
@@ -31,7 +28,6 @@ from src.ecology import (
     predict_ecological_impact,
     predict_ecological_impact_index,
     predict_hazard_coherence,
-    load_ecology_models_index
 )
 # CONFIGURACIÓN BÁSICA
 
@@ -64,7 +60,7 @@ mode = st.sidebar.radio(
 def get_model():
     return load_model()
 
-@st.cache_data
+@st.cache_resource
 def get_grilla():
     return load_grilla()
 
@@ -76,7 +72,7 @@ def get_microplastics_overlay():
     image_path = "data/Predicciones/microplastics_log_est.png"
     return image_path, bounds
 
-@st.cache_data
+@st.cache_resource
 def get_hazard_gdf():
     return gpd.read_file(
         "./data/grid_indice/hazard_index_grid_final.gpkg",
@@ -90,7 +86,7 @@ def get_hazard_gdf():
         ]
     )
 
-@st.cache_data
+@st.cache_resource
 def get_mp_gdf():
     return gpd.read_file(
         "./data/grid_ocean/gdf_microplastics_with_env.gpkg",
@@ -104,7 +100,6 @@ def get_mp_gdf():
         ]
     )
 
-gdf_continuo = None
 mp_gdf = None
 hazard_gdf = None
 
@@ -688,8 +683,7 @@ if mode == "Flujo interactivo":
                     hazard_morphology
                 )
                 
-                del mp_gdf
-                import gc; gc.collect()
+                mp_gdf = None
 
             hazard_index = st.session_state.hazard_index
             label = hazard_label(hazard_index)
@@ -1083,13 +1077,14 @@ elif mode == "Análisis por capas":
             bins = [0, 50, 200, np.inf]
             labels = ["0-50 km", "51-200 km", ">200 km"]
 
+            mp_gdf = mp_gdf.copy()
             mp_gdf["coastal_band"] = pd.cut(
                 mp_gdf["distance_to_coast_km"],
                 bins=bins,
                 labels=labels,
             )
             # Transformación logarítmica para visualización
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
             mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
 
             fig, ax = plt.subplots()
@@ -1195,9 +1190,9 @@ elif mode == "Análisis por capas":
 
             # Preparar datos
             mp_gdf = mp_gdf.copy()
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
             mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
-            import pydeck as pdk
+
             layer = pdk.Layer(
                 "ScatterplotLayer",
                 data=mp_gdf,
@@ -1244,7 +1239,7 @@ elif mode == "Análisis por capas":
             )
 
             mp_gdf = mp_gdf.copy()
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
+            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
             mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
 
             fig, ax = plt.subplots()

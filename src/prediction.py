@@ -35,39 +35,6 @@ def load_model():
 import folium
 from branca.colormap import LinearColormap
 
-def build_base_map(gdf):
-    m = folium.Map(
-        location=[0, 0],
-        zoom_start=2
-    )
-
-    vmin = gdf["microplastics_log_est"].quantile(0.05)
-    vmax = gdf["microplastics_log_est"].quantile(0.95)
-
-    colormap = LinearColormap(
-        ["blue", "cyan", "yellow", "orange", "red"],
-        vmin=vmin,
-        vmax=vmax,
-        caption="Microplásticos estimados (items/m³)"
-    )
-
-    for _, row in gdf.iterrows():
-        folium.CircleMarker(
-            [row.geometry.y, row.geometry.x],
-            radius=2,
-            fill=True,
-            fill_opacity=0.8,
-            color=colormap(row["microplastics_log_est"]),
-            fill_color=colormap(row["microplastics_log_est"]),
-            weight=0
-        ).add_to(m)
-
-    colormap.add_to(m)
-    return m
-
-
-
-
 # Extraer variables ambientales de la celda
 def extract_environmental_variables(cell: pd.Series, feature_names: list):
     missing = [v for v in feature_names if v not in cell.index]
