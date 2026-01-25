@@ -373,35 +373,47 @@ if mode == "Flujo interactivo":
     "Selecciona un punto del océano para estimar la concentración "
     "esperada de microplásticos a partir de las condiciones oceánicas reales."
     )
-    m = folium.Map(
-        location=[0, 0],
-        zoom_start=2,
-        tiles="CartoDB voyager"
+    # Mapa vacío
+    map_data = st_folium(
+        folium.Map(location=[0, 0], zoom_start=2, tiles="CartoDB voyager"),
+        width=900,
+        height=520,
+        key="mapa_interactivo"
     )
+    # Procesar click
+    if map_data and map_data.get("last_clicked"):
+        new_point = (
+            round(map_data["last_clicked"]["lat"], 6),
+            round(map_data["last_clicked"]["lng"], 6),
+        )
+
+        if st.session_state.last_processed_click != new_point:
+            st.session_state.last_processed_click = new_point
+
+            st.session_state.clicked_point = {
+                "lat": new_point[0],
+                "lon": new_point[1],
+            }
+
+            st.session_state.hazard_index = None
+    
+    # Reconstruir el mapa con el punto
+    m = folium.Map(location=[0, 0], zoom_start=2, tiles="CartoDB voyager")
 
     if st.session_state.clicked_point is not None:
-        fg = folium.FeatureGroup(name="Selected point")
-
         folium.Marker(
             location=[
                 st.session_state.clicked_point["lat"],
                 st.session_state.clicked_point["lon"]
             ],
             icon=folium.Icon(color="black", icon="dot-circle-o")
-        ).add_to(fg)
-
-        fg.add_to(m)
+        ).add_to(m)
+    
+    st_folium(m, width=900, height=520, key="mapa_interactivo_render")
 
     if "last_processed_click" not in st.session_state:
         st.session_state.last_processed_click = None
 
-
-    map_data = st_folium(
-        m,
-        width=900,
-        height=520,
-        key="mapa_interactivo"
-    )
 
     # Actualizar punto clicado. Aquí solo se guarda el click más reciente
     if map_data and map_data.get("last_clicked"):
