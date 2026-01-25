@@ -67,16 +67,6 @@ def get_grilla():
     return load_grilla()
 
 @st.cache_data
-def get_mapa_continuo():
-    return gpd.read_file(
-        "./data/Predicciones/mapa_continuo.gpkg",
-        columns=["geometry",
-                 "microplastics_log_est",
-                 "profile_eco"
-            ]
-        )
-
-@st.cache_data
 def get_hazard_gdf():
     return gpd.read_file(
         "./data/grid_indice/hazard_index_grid_final.gpkg",
@@ -253,64 +243,13 @@ WEIGHTS = {
 def normalize(value, vmin, vmax):
     return max(0, min(1, (value - vmin) / (vmax - vmin)))
 
-def build_map(_gdf_continuo):
-    # Mapa base (centrado global)
-    m = folium.Map(
-        location=[0, 0],
-        zoom_start=2,
-        tiles="CartoDB voyager"
-    )
-    # Colormap
-    vmin = _gdf_continuo["microplastics_log_est"].min()
-    vmax = _gdf_continuo["microplastics_log_est"].max()
-    colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
-    colormap.caption = "Concentración estimada de microplásticos (log items/m³)"
-    # Subsample
-    gdf_plot = _gdf_continuo[
-        (_gdf_continuo.geometry.y.between(-60, 60))
-    ].sample(300, random_state=42)
 
-    # Overlay de microplásticos
-    for _, row in gdf_plot.iterrows():
-        lat = row.geometry.y
-        lon = row.geometry.x
-        color = colormap(row["microplastics_log_est"])
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=5,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.8,
-        color=None
-        ).add_to(m)
-    # Leyenda
-    colormap.add_to(m)
-    return m
-
-
-@st.cache_data
-def compute_profile_means(_gdf_continuo, profile_col="profile_eco"):
-    return (
-        _gdf_continuo
-        .groupby(profile_col)[FEATURES]
-        .mean()
-    )
 @st.cache_data
 def get_profile_means():
-    gdf = gpd.read_file(
-        "./data/Predicciones/mapa_continuo.gpkg",
-        columns=["profile_eco"] + FEATURES
-    )
+    gdf = get_grilla()
     return gdf.groupby("profile_eco")[FEATURES].mean()
 
 
-def get_ocean_profile_at_point(gdf_proj, lon, lat):
-    point_proj = gpd.GeoSeries(
-        [Point(lon, lat)], crs=4326
-    ).to_crs(epsg=3857).iloc[0]
-
-    idx = gdf_proj.geometry.distance(point_proj).idxmin()
-    return gdf_proj.loc[idx, "profile_eco"]
 
 def plot_oceanographic_radar(env_point, env_mean, profile_name):
     tech_labels = FEATURES
@@ -401,7 +340,6 @@ st.sidebar.markdown("### 🧠 Uso de memoria")
 st.sidebar.write(f"{memory_usage_mb():.1f} MB")
 
 if mode == "Flujo interactivo":
-    gdf_continuo = get_mapa_continuo()
     st.header("Selección espacial")
     st.sidebar.markdown(
         "<h2 style=color:#1f77b4;'>Inputs del escenario</h2>",
@@ -435,7 +373,11 @@ if mode == "Flujo interactivo":
     "Selecciona un punto del océano para estimar la concentración "
     "esperada de microplásticos a partir de las condiciones oceánicas reales."
     )
-    m = build_map(get_mapa_continuo())
+    m = folium.Map(
+        location=[0, 0],
+        zoom_start=2,
+        tiles="CartoDB voyager"
+    )
 
     if st.session_state.clicked_point is not None:
         fg = folium.FeatureGroup(name="Selected point")
@@ -457,7 +399,8 @@ if mode == "Flujo interactivo":
     map_data = st_folium(
         m,
         width=900,
-        height=520
+        height=520,
+        key="mapa_interactivo"
     )
 
     # Actualizar punto clicado. Aquí solo se guarda el click más reciente
@@ -478,6 +421,7 @@ if mode == "Flujo interactivo":
             st.session_state.hazard_index = None
 
         
+
     if st.session_state.clicked_point is not None:
         lat = st.session_state.clicked_point["lat"]
         lon = st.session_state.clicked_point["lon"]
@@ -494,7 +438,9 @@ if mode == "Flujo interactivo":
             model=model,
             feature_names=FEATURES
         )
-
+        ocean_profile = result["profile_eco"]
+        st.write("Índice de celda:", result["cell_index"])
+        st.write("Perfil:", result["profile_eco"])
         # OUTPUTS
 
         st.subheader("Resultado")
@@ -512,17 +458,6 @@ if mode == "Flujo interactivo":
             with st.expander("Ver valor en escala logarítmica"):
                 st.write(f"{result['microplastics_log']:.3f}")
 
-            # Extraer perfil oceanográfico desde el mapa contínuo
-            gdf_continuo_proj = gdf_continuo.to_crs(epsg=3857)
-            ocean_profile = get_ocean_profile_at_point(
-                gdf_continuo_proj,
-                lon=lon,
-                lat=lat
-            )
-            # 🔥 LIBERAR MEMORIA INMEDIATAMENTE
-            del gdf_continuo_proj
-            import gc
-            gc.collect()
             # Perfil ecológico
             profile_label = PROFILE_LABELS.get(ocean_profile, ocean_profile)
             color = PROFILE_COLORS.get(ocean_profile, "#999999")
@@ -1021,7 +956,6 @@ elif mode == "Análisis por capas":
     )
 
     if capa == "Microplásticos":
-        gdf_continuo = get_mapa_continuo()
         mp_gdf = get_mp_gdf()
         hazard_gdf = get_hazard_gdf()
         st.header("Análisis de microplásticos")
