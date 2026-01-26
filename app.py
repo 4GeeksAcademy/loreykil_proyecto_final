@@ -109,10 +109,11 @@ def get_mp_gdf():
         ]
     )
 
-mp_gdf = None
-hazard_gdf = None
-
 @st.cache_resource
+def get_mp_parquet():
+    return pd.read_parquet(
+        "./data/grid_ocean/NOAA_encology.parquet",
+    )@st.cache_resource
 def load_raster(path):
     return rasterio.open(path)
 
@@ -400,13 +401,12 @@ if mode == "Flujo interactivo":
 
     m = folium.Map(
         location=[0, 0],
-        zoom_start=2,
+        zoom_start=1,
         tiles=None,
         crs="EPSG4326",
         no_wrap=True,
     )
-
-
+    
     folium.raster_layers.ImageOverlay(
         image=image_path,
         bounds=raster_bounds,
@@ -448,6 +448,10 @@ if mode == "Flujo interactivo":
     width=900,
     height=520,
     key="mapa_interactivo"
+    )
+    st.image(
+    "data/Predicciones/leyenda_microplasticos.png",
+    width=500
     )
 
     # Procesar click
@@ -1011,15 +1015,65 @@ elif mode == "Análisis por capas":
         )
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
+           "Mapa observado",
             "Distribución",
             "Costa",
             "Ambiente",
-            "Mapa observado",
             "Clusters"
         ])
 
-        # TAB 1: Distribución
+        # TAB 1: Mapa observado
         with tab1:
+            st.subheader("Distribución espacial observada")
+
+            st.markdown(
+                """
+                Este mapa muestra la localización de las muestras de microplásticos utilizados en el análisis.
+                Cada punto representa una observación puntual.
+                """
+            )
+
+            # Preparar datos
+            mp_parquet = get_mp_parquet().copy()
+            mp_parquet = mp_parquet[mp_gdf["microplastics_measurement"] > 0].copy()
+            mp_parquet["log_microplastics"] = np.log10(mp_parquet["microplastics_measurement"])
+
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=mp_parquet,
+                get_position="[lon, lat]",
+                get_radius=30000,
+                get_fill_color="[log_microplastics * 30 + 100, 100, 160, 160]",
+                pickable=True,
+            )
+
+            view_state = pdk.ViewState(
+                latitude=mp_parquet["lat"].mean(),
+                longitude=mp_parquet["lon"].mean(),
+                zoom=1,
+            )
+
+            st.pydeck_chart(
+                pdk.Deck(
+                    layers=[layer],
+                    initial_view_state=view_state,
+                    tooltip={
+                        "text": "Microplásticos (log): {log_microplastics}"
+                    },
+                )
+            )
+            with st.expander("Ver tabla de datos"):
+                st.dataframe(
+                    mp_parquet[[
+                        "lat",
+                        "lon",
+                        "microplastics_measurement",
+                        "log_microplastics"
+                    ]].head(200)
+                )
+
+        # TAB 2: Distribución
+        with tab2:
             st.subheader("Distribución de concentraciones")
             scale = st.radio(
                 "Escala",
@@ -1033,13 +1087,13 @@ elif mode == "Análisis por capas":
                 )
             )
             
-            data = mp_gdf["microplastics_measurement"].dropna()
+            data = mp_parquet["microplastics_measurement"].dropna()
             if scale == "Logarítmica":
-                data = data[data > 0]
-                plot_data = np.log10(data)
-                xlabel = "Log₁₀(Microplásticos items/m³)"
+                data = mp_parquet["log_microplastics"]
+                plot_data = mp_parquet["log_microplastics"]
+                xlabel = "Log(Microplásticos items/m³)"
             else:
-                plot_data = data
+                plot_data = mp_parquet["microplastics_measurement"]
                 xlabel = "Microplásticos items/m³"
             
             fig, ax = plt.subplots()
@@ -1067,18 +1121,18 @@ elif mode == "Análisis por capas":
 
             st.markdown(
                 f"""
-                - Número de muestras: **{len(mp_gdf["microplastics_measurement"].dropna())}**
-                - Concentración media: **{mp_gdf["microplastics_measurement"].mean():.2f} items/m³**
-                - Concentración mediana: **{mp_gdf["microplastics_measurement"].median():.2f} items/m³**
-                - Percentil 90: **{np.percentile(mp_gdf["microplastics_measurement"].dropna(), 90):.2f} items/m³**
+                - Número de muestras: **{len(mp_parquet["microplastics_measurement"].dropna())}**
+                - Concentración media: **{mp_parquet["microplastics_measurement"].mean():.2f} items/m³**
+                - Concentración mediana: **{mp_parquet["microplastics_measurement"].median():.2f} items/m³**
+                - Percentil 90: **{np.percentile(mp_parquet["microplastics_measurement"].dropna(), 90):.2f} items/m³**
                 """
             )
 
         
-            st.dataframe(mp_gdf.head(200))
+            st.dataframe(mp_parquet.head(200))
 
-        # TAB 2: Costa
-        with tab2:
+        # TAB 3: Costa
+        with tab3:
             st.subheader("Microplásticos y distancia a la costa")
             
             st.markdown(
@@ -1088,19 +1142,16 @@ elif mode == "Análisis por capas":
             bins = [0, 50, 200, np.inf]
             labels = ["0-50 km", "51-200 km", ">200 km"]
 
-            mp_gdf = mp_gdf.copy()
-            mp_gdf["coastal_band"] = pd.cut(
-                mp_gdf["distance_to_coast_km"],
+            mp_parquet = mp_parquet.copy()
+            mp_parquet["coastal_band"] = pd.cut(
+                mp_parquet["distance_to_coast_km"],
                 bins=bins,
                 labels=labels,
             )
-            # Transformación logarítmica para visualización
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
-            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
 
             fig, ax = plt.subplots()
             
-            mp_gdf.boxplot(
+            mp_parquet.boxplot(
                 column="log_microplastics",
                 by="coastal_band",
                 ax=ax,
@@ -1109,7 +1160,7 @@ elif mode == "Análisis por capas":
             )
 
             ax.set_xlabel("Distancia a la costa")
-            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_ylabel("Log(Microplásticos items/m³)")
             ax.set_title("Concentración de microplásticos según distancia a la costa")
             plt.suptitle("")
 
@@ -1120,29 +1171,18 @@ elif mode == "Análisis por capas":
             with st.expander("¿Cómo interpretar este gráfico?"):
                 st.markdown(
                     """
-                    - Se utiliza una escala logarítmica para reducir la influencia de valores extremos.
                     - Las tres categorías muestran concentraciones bajas en la mayoría de observaciones
                     - Sin embargo, existen valores extremos en todas las distancias.
                     - Distribución asimétrica. Hotspots localizados.                   
                     """
                 )
 
-        # TAB 3: Ambiente
-        mp_gdf = gpd.read_file(
-            "./data/grid_ocean/gdf_microplastics_with_env.gpkg",
-            columns=[
-                "lat",
-                "lon",
-                "microplastics_measurement",
-                "profile_eco",
-                "distance_to_coast_km",
-            ] + FEATURES
-        )
-        with tab3:
+        # TAB 4: Ambiente
+        with tab4:
             st.subheader("Microplásticos y variables ambientales")
 
             st.markdown(
-                "Explora cómo varían las concentraciones de microplásticos "
+                "Explora las concentraciones de microplásticos "
                 "en función de las variables ambientales medidas."
             )
 
@@ -1152,25 +1192,17 @@ elif mode == "Análisis por capas":
                 index=0
             )
 
-            st.caption(
-                "Las relaciones mostradas son exploratorias y no implican causalidad."
-            )
-
-            mp_gdf = mp_gdf.copy()
-            mp_df = mp_gdf[mp_gdf["microplastics_measurement"] > 0]
-            mp_df["log_microplastics"] = np.log10(mp_df["microplastics_measurement"])
-
             fig, ax = plt.subplots()
 
             ax.scatter(
-                mp_df[env_var],
-                mp_df["log_microplastics"],
+                mp_parquet[env_var],
+                mp_parquet["log_microplastics"],
                 alpha=0.5,
                 s=20,
                 color="#1f77b4"
             )
             ax.set_xlabel(f"{ENV_VARS_META[env_var]['label']}")
-            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_ylabel("Log(Microplásticos items/m³)")
             ax.set_title(
                 f"Microplásticos vs {ENV_VARS_META[env_var]['label']}"
             )
@@ -1188,55 +1220,6 @@ elif mode == "Análisis por capas":
                     patrones complejos y heterogéneos.
                     """
                 )
-        # TAB 4: Mapa observado
-        with tab4:
-            st.subheader("Distribución espacial observada")
-
-            st.markdown(
-                """
-                Este mapa muestra la localización de las muestras de microplásticos utilizados en el análisis.
-                Cada punto representa una observación puntual.
-                """
-            )
-
-            # Preparar datos
-            mp_gdf = mp_gdf.copy()
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
-            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
-
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                data=mp_gdf,
-                get_position="[lon, lat]",
-                get_radius=30000,
-                get_fill_color="[log_microplastics * 30 + 100, 100, 160, 160]",
-                pickable=True,
-            )
-
-            view_state = pdk.ViewState(
-                latitude=mp_gdf["lat"].mean(),
-                longitude=mp_gdf["lon"].mean(),
-                zoom=2,
-            )
-
-            st.pydeck_chart(
-                pdk.Deck(
-                    layers=[layer],
-                    initial_view_state=view_state,
-                    tooltip={
-                        "text": "Microplásticos (log₁₀): {log_microplastics}"
-                    },
-                )
-            )
-            with st.expander("Ver tabla de datos"):
-                st.dataframe(
-                    mp_gdf[[
-                        "lat",
-                        "lon",
-                        "microplastics_measurement",
-                        "log_microplastics"
-                    ]].head(200)
-                )
 
         # TAB 5: Clusters
         with tab5:
@@ -1244,31 +1227,31 @@ elif mode == "Análisis por capas":
 
             st.markdown(
                 """
-                Explora cómo varían las concentraciones de microplásticos
+                Explora las concentraciones de microplásticos
                 según los perfiles ambientales oceánicos definidos.
                 """
             )
-
-            mp_gdf = mp_gdf.copy()
-            mp_gdf = mp_gdf[mp_gdf["microplastics_measurement"] > 0].copy()
-            mp_gdf["log_microplastics"] = np.log10(mp_gdf["microplastics_measurement"])
-
+            
             fig, ax = plt.subplots()
 
             # Ordenar clusters para que el gráfico sea estable
-            clusters = sorted(mp_gdf["profile_eco"].dropna().unique())
+            clusters = sorted(mp_parquet["profile_eco"].dropna().unique())
 
             ax.boxplot(
                 [
-                    mp_gdf.loc[mp_gdf["profile_eco"] == c, "log_microplastics"]
+                    mp_parquet.loc[mp_parquet["profile_eco"] == c, "log_microplastics"]
                     for c in clusters
                 ],
-                labels=[f'{PROFILE_LABELS.get(c, c)}' for c in clusters],
                 showfliers=True
+            )
+            ax.set_xticklabels(
+                [PROFILE_LABELS.get(c, c) for c in clusters],
+                rotation=30,
+                ha="right"
             )
 
             ax.set_xlabel("Perfil ambiental oceánico")
-            ax.set_ylabel("Log₁₀(Microplásticos items/m³)")
+            ax.set_ylabel("Log(Microplásticos items/m³)")
             ax.set_title("Concentración de microplásticos según perfil ambiental")
 
             st.pyplot(fig)
@@ -1278,7 +1261,6 @@ elif mode == "Análisis por capas":
             with st.expander("¿Cómo interpretar este gráfico?"):
                 st.markdown(
                     """
-                     - Cada caja representa la distribución de microplásticos dentro de un perfil ambiental.
                      - Los clusters agrupan puntos con condiciones ambientales similares.
                      - Algunos perfiles muestran concentraciones típicas más altas o mayor variabilidad.
                      - Estas diferencias no implican causalidad directa, sino asociaciones contextuales.
@@ -1287,7 +1269,8 @@ elif mode == "Análisis por capas":
 
             # Tabla resumen
             summary = (
-                mp_gdf.groupby("profile_eco")["microplastics_measurement"]
+                mp_parquet
+                .groupby("profile_eco")["microplastics_measurement"]
                 .agg(
                     n_observations="count",
                     median="median",
@@ -1295,14 +1278,29 @@ elif mode == "Análisis por capas":
                 )
                 .reset_index()
             )
+            summary["Perfil ambiental"] = summary["profile_eco"].map(
+                lambda x: PROFILE_LABELS.get(x, x)
+            )
+
+            summary = summary[
+                [
+                    "Perfil ambiental",
+                    "n_observations",
+                    "median",
+                    "mean"
+                ]
+            ]
+            summary = summary.rename(
+                columns={
+                    "n_observations": "N",
+                    "median": "Mediana (items/m³)",
+                    "mean": "Media (items/m³)"
+                }
+            )
+
 
             with st.expander("Ver resumen por cluster"):
-                st.dataframe(summary)
-
-        del mp_gdf
-        import gc
-        gc.collect()
-            
+                st.dataframe(summary)       
         
             
     elif capa == "Índice":
