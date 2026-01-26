@@ -13,3 +13,4 @@ psutil
 scikit-learn
 joblib
 xgboost
+rasterio

@@ -3,18 +3,13 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from streamlit_folium import st_folium
 import folium
 import json
 from shapely.geometry import Point
-import branca.colormap as cm
 import pydeck as pdk
 import plotly.graph_objects as go
 from statsmodels.nonparametric.smoothers_lowess import lowess
-import psutil
-import os
-from folium.plugins import HeatMap
 import rasterio
 from folium.raster_layers import ImageOverlay
 
