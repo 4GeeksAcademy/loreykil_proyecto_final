@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from streamlit_folium import st_folium
 import folium
 import json
@@ -14,6 +15,9 @@ from statsmodels.nonparametric.smoothers_lowess import lowess
 import psutil
 import os
 from folium.plugins import HeatMap
+import rasterio
+from folium.raster_layers import ImageOverlay
+
 
 from src.prediction import (
     load_grilla,
@@ -46,11 +50,11 @@ if "hazard_index" not in st.session_state:
     st.session_state.hazard_index = None
 
 st.set_page_config(
-    page_title="Título de la App",
+    page_title="Modelado espacial de microplásticos y análisis de presión ecológica",
     layout="wide"
 )
 
-st.title("Título de la App")
+st.title("Modelado espacial de microplásticos y análisis de presión ecológica")
 st.sidebar.markdown("## Modo de visualización")
 mode = st.sidebar.radio(
     "",
@@ -350,22 +354,6 @@ def get_ecology_models():
 def get_land_polygons():
     return gpd.read_file("./data/ocean/ne_10m_land.shp").to_crs(epsg=4326)
 
-
-def memory_usage_mb():
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / 1024 / 1024
-
-st.sidebar.markdown("### :brain: Uso de memoria")
-st.sidebar.write(f"{memory_usage_mb():.1f} MB")
-import psutil
-import os
-
-def memory_usage_mb():
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / 1024 / 1024
-
-st.sidebar.markdown("### 🧠 Uso de memoria")
-st.sidebar.write(f"{memory_usage_mb():.1f} MB")
 
 if mode == "Flujo interactivo":
     st.header("Selección espacial")
@@ -713,7 +701,7 @@ if mode == "Flujo interactivo":
 
             hazard_index = st.session_state.hazard_index
             label = hazard_label(hazard_index)
-    # Visualización
+        # Visualización
         if hazard_index is not None:
             st.subheader("Hazard Index")
 
@@ -977,7 +965,7 @@ if mode == "Flujo interactivo":
     )
     
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(2.8, 1.9))
     ax.hist(risk_dist, bins=30, alpha=0.7)
     ax.axvline(risk_pred, color="red", linewidth=2)
     ax.set_xlabel("iucn_mean_risk observado")
@@ -1011,7 +999,7 @@ elif mode == "Análisis por capas":
 
     capa = st.radio(
         "",
-        ["Microplásticos", "Hazard", "Ecología"],
+        ["Microplásticos", "Índice", "Ecología"],
         horizontal=True
     )
 
@@ -2115,35 +2103,31 @@ elif mode == "Análisis por capas":
         )
 
         # =========================================================
-        # CARGA Y PREPARACIÓN DEL DATASET GLOBAL
+        # CARGA DEL DATASET GLOBAL (SOLO PARA CONSULTAS LOCALES)
         # =========================================================
 
         gdf_global = get_global_ecology_gdf()
-        land = get_land_polygons()
-    
-        # 👉 SOLO OCÉANO + valores válidos
-        gdf_global = gdf_global[
-            (gdf_global["pred_iucn_mean_risk"].notna())
-        ].copy()
 
-        # 🔑 CLAVE: reproyección para Folium
+        # Asegurar CRS geográfico (solo por seguridad)
         if gdf_global.crs.to_epsg() != 4326:
             gdf_global = gdf_global.to_crs(epsg=4326)
 
-        # =========================================================
-        # FILTRAR SOLO OCÉANO (QUITAR TIERRA)
-        # =========================================================
+        # Precalcular centroides una sola vez (rendimiento)
+        if "geometry_point" not in gdf_global.columns:
+            gdf_global["geometry_point"] = gdf_global.geometry.centroid
 
-        gdf_global["geometry_point"] = gdf_global.geometry.centroid
+        with open("./data/Predicciones/pred_iucn_mean_risk_bounds.json") as f:
+            bounds = json.load(f)
 
-        gdf_global = gdf_global[
-            ~gdf_global["geometry_point"].apply(
-                lambda p: land.contains(p).any()
-            )
-        ].copy()
+        south, west, north, east = (
+            bounds["south"],
+            bounds["west"],
+            bounds["north"],
+            bounds["east"],
+        )
 
         # =========================================================
-        # SELECTOR DE VARIABLE PARA EL MAPA
+        # SELECTOR DE VARIABLE MOSTRADA
         # =========================================================
 
         st.markdown("### 🎨 Variable mostrada en el mapa")
@@ -2158,24 +2142,32 @@ elif mode == "Análisis por capas":
         )
 
         if color_var_label == "Riesgo ecológico medio (IUCN)":
-            COLOR_COL = "pred_iucn_mean_risk"
-            COLOR_LABEL = "Riesgo ecológico medio proyectado (IUCN)"
+            raster_path = "./data/Predicciones/pred_iucn_mean_risk.png"
+            raster_label = "Riesgo ecológico medio proyectado (IUCN)"
         else:
-            COLOR_COL = "pred_log_iucn_species_count"
-            COLOR_LABEL = "Especies vulnerables potencialmente afectadas (log)"
+            raster_path = "./data/Predicciones/pred_log_iucn_species_count.png"
+            raster_label = "Especies vulnerables potencialmente afectadas (log)"
 
         # =========================================================
-        # COLORMAP (ROBUSTO)
+        # LEER BOUNDS DESDE EL GEOTIFF (PARA POSICIONAR EL PNG)
         # =========================================================
+        
+        if color_var_label == "Riesgo ecológico medio (IUCN)":
+            bounds_path = "./data/Predicciones/pred_iucn_mean_risk_bounds.json"
+        else:
+            bounds_path = "./data/Predicciones/pred_log_iucn_species_count_bounds.json"
 
-        vmin = gdf_global[COLOR_COL].quantile(0.02)
-        vmax = gdf_global[COLOR_COL].quantile(0.98)
+        with open(bounds_path) as f:
+            bounds = json.load(f)
 
-        colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
-        colormap.caption = COLOR_LABEL
+        south = bounds["south"]
+        west  = bounds["west"]
+        north = bounds["north"]
+        east  = bounds["east"]
+
 
         # =========================================================
-        # CONSTRUCCIÓN DEL MAPA (UNA SOLA VEZ)
+        # CONSTRUCCIÓN DEL MAPA (PNG PRECOMPUTADO)
         # =========================================================
 
         m = folium.Map(
@@ -2184,66 +2176,20 @@ elif mode == "Análisis por capas":
             tiles="CartoDB voyager"
         )
 
-        # Submuestreo para rendimiento
-        gdf_plot = gdf_global.sample(
-            min(4000, len(gdf_global)),
-            random_state=42
-        )
-
-        # =========================================================
-        # HEATMAP (GRADIENTE CONTINUO)
-        # =========================================================
-
-        heat_data = []
-
-        for _, row in gdf_plot.iterrows():
-            centroid = row.geometry.centroid
-
-            value = float(row[COLOR_COL])
-            if not np.isnan(value):
-                heat_data.append([
-                    centroid.y,
-                    centroid.x,
-                    value
-                ])
-
-        HeatMap(
-            heat_data,
-            gradient={
-                0.0: "#2c7bb6",
-                0.4: "#abd9e9",
-                0.6: "#ffffbf",
-                0.8: "#fdae61",
-                1.0: "#d7191c",
-            },
-            radius=25,
-            blur=30,
-            min_opacity=0.3,
+        ImageOverlay(
+            image=raster_path,
+            bounds=[
+                [south, west],
+                [north, east]
+            ],
+            opacity=0.9,
+            interactive=False,
+            cross_origin=False,
+            zindex=1
         ).add_to(m)
-
-
+        
         # =========================================================
-        # MARCADOR DEL CLICK (si existe)
-        # =========================================================
-
-        if "global_click" in st.session_state:
-            folium.CircleMarker(
-                location=[
-                    st.session_state.global_click["lat"],
-                    st.session_state.global_click["lng"]
-                ],
-                radius=8,
-                color="black",
-                weight=2,
-                fill=True,
-                fill_color="cyan",
-                fill_opacity=1,
-            ).add_to(m)
-
-        colormap.add_to(m)
-
-        # =========================================================
-        # RENDER DEL MAPA (UNA SOLA VEZ)
+        # RENDER DEL MAPA
         # =========================================================
 
         map_data = st_folium(
@@ -2267,7 +2213,7 @@ elif mode == "Análisis por capas":
                 st.rerun()
 
         # =========================================================
-        # OUTPUT LOCAL + MINI RADAR AMBIENTAL 🔥
+        # OUTPUT LOCAL + TABLA AMBIENTAL
         # =========================================================
 
         if "global_click" in st.session_state:
@@ -2275,16 +2221,17 @@ elif mode == "Análisis por capas":
             lat = st.session_state.global_click["lat"]
             lng = st.session_state.global_click["lng"]
 
-            point = gpd.GeoSeries(
-                [Point(lng, lat)],
-                crs=4326
-            )
+            st.markdown("### 📍 Resultado local")
 
-            distances = gdf_global.geometry.distance(point.iloc[0])
+            # -----------------------------------------------------
+            # CONTEXTO DESDE gdf_global (YA LIMPIO DE TIERRA)
+            # -----------------------------------------------------
+
+            point = Point(lng, lat)
+
+            distances = gdf_global["geometry_point"].distance(point)
             idx = distances.idxmin()
             row = gdf_global.loc[idx]
-
-            st.markdown("### 📍 Resultado local")
 
             col1, col2 = st.columns(2)
 
@@ -2300,7 +2247,10 @@ elif mode == "Análisis por capas":
                     f"{row['pred_iucn_species_count']:.1f}"
                 )
 
-            # Percentil global
+            # -----------------------------------------------------
+            # CONTEXTUALIZACIÓN GLOBAL
+            # -----------------------------------------------------
+
             risk_dist = gdf_global["pred_iucn_mean_risk"].values
             percentile = (risk_dist < row["pred_iucn_mean_risk"]).mean() * 100
 
@@ -2312,9 +2262,9 @@ elif mode == "Análisis por capas":
                 """
             )
 
-            # -----------------------------
+            # -----------------------------------------------------
             # TABLA DE VARIABLES AMBIENTALES
-            # -----------------------------
+            # -----------------------------------------------------
 
             st.markdown("### 🌊 Contexto ambiental local")
 
@@ -2354,5 +2304,7 @@ elif mode == "Análisis por capas":
             similares, aprendidos a partir de datos globales.
             """
         )
+
+
 
 
