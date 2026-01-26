@@ -351,16 +351,15 @@ def get_land_polygons():
 
 
 if mode == "Flujo interactivo":
-    st.header("Selección espacial")
-    st.sidebar.markdown(
+    st.markdown(
         "<h2 style=color:#1f77b4;'>Inputs del escenario</h2>",
         unsafe_allow_html=True
     )
 
-    st.sidebar.markdown(
+    st.markdown(
         """
         <div style="
-            font-size: 12px;
+            font-size: 16px;
             color: #777777;
             line-height: 1.4;
         ">
@@ -377,6 +376,8 @@ if mode == "Flujo interactivo":
         unsafe_allow_html=True
     )
 
+    st.header("Selección espacial")
+    
     st.sidebar.divider()
     # INTERACCIÓN CAPA 1¡
     st.write(
@@ -1028,7 +1029,7 @@ elif mode == "Análisis por capas":
             )
 
             # Preparar datos
-            mp_parquet = get_mp_parquet().copy()
+            mp_parquet = get_mp_parquet()
             mp_parquet = mp_parquet[mp_gdf["microplastics_measurement"] > 0].copy()
             mp_parquet["log_microplastics"] = np.log10(mp_parquet["microplastics_measurement"])
 
