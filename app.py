@@ -417,8 +417,7 @@ if mode == "Flujo interactivo":
         crs="EPSG4326",
         no_wrap=True,
     )
-
-
+    
     folium.raster_layers.ImageOverlay(
         image=image_path,
         bounds=raster_bounds,
@@ -460,6 +459,10 @@ if mode == "Flujo interactivo":
     width=900,
     height=520,
     key="mapa_interactivo"
+    )
+    st.image(
+    "data/Predicciones/leyenda_microplasticos.png",
+    width=500
     )
 
     # Procesar click
