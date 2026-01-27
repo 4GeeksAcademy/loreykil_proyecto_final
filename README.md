@@ -5,6 +5,14 @@ Este proyecto analiza la distribución espacial de microplásticos y su relació
 con variables ambientales y de riesgo ecológico, combinando modelos predictivos
 y análisis explicativos espaciales.
 
+## Aplicación interactiva
+🔗 **Render App:** [https://tu-app.streamlit.app](https://loreykil-proyecto-final.onrender.com/)
+
+La aplicación permite explorar de forma interactiva los mapas de microplásticos,
+comparar la presión por microplásticos con el riesgo ecológico y visualizar
+resultados del modelado espacial.
+
+
 ## 1. Contexto y problema
 La contaminación por microplásticos es una de las principales presiones antrópicas
 sobre los ecosistemas marinos. Su disponibilidad espacial es altamente heterogénea y
