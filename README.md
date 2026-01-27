@@ -6,7 +6,7 @@ con variables ambientales y de riesgo ecológico, combinando modelos predictivos
 y análisis explicativos espaciales.
 
 ## Aplicación interactiva
-🔗 **Render App:** [https://tu-app.streamlit.app](https://loreykil-proyecto-final.onrender.com/)
+🔗 **Render App:** [https://loreykil-proyecto-final.onrender.com/]
 
 La aplicación permite explorar de forma interactiva los mapas de microplásticos,
 comparar la presión por microplásticos con el riesgo ecológico y visualizar
