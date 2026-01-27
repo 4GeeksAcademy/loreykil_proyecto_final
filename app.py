@@ -48,8 +48,36 @@ st.set_page_config(
     page_title="Modelado espacial de microplásticos y análisis de presión ecológica",
     layout="wide"
 )
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap');
 
-st.title("Modelado espacial de microplásticos y análisis de presión ecológica")
+    html, body, [class*="css"] {
+        font-family: 'Source Sans 3', sans-serif;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <h1 style="
+        text-align: center;
+        font-size: 56px;
+        font-weight: 700;
+        color: #1e2b26;
+        margin-bottom: 0.25em;
+        letter-spacing: 0.6px;
+        text-transform: none;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.05);   
+    ">
+        Modelado espacial de microplásticos y análisis de presión ecológica
+    </h1>
+    """,
+    unsafe_allow_html=True
+)
 st.sidebar.markdown("## Modo de visualización")
 mode = st.sidebar.radio(
     "",
@@ -389,7 +417,7 @@ if mode == "Análisis por capas":
 
             # Preparar datos
             mp_parquet = get_mp_parquet()
-            mp_parquet = mp_parquet[mp_gdf["microplastics_measurement"] > 0].copy()
+            mp_parquet = mp_parquet[mp_parquet["microplastics_measurement"] > 0].copy()
             mp_parquet["log_microplastics"] = np.log10(mp_parquet["microplastics_measurement"])
 
             layer = pdk.Layer(
@@ -715,17 +743,21 @@ if mode == "Análisis por capas":
         st.subheader("¿Qué valores del Hazard Index son habituales?")
 
         hazard_values = hazard_gdf["hazard_index"].dropna().values
+        col_plot2, _ = st.columns([2, 1])
+        with col_plot2:
 
-        fig, ax = plt.subplots(figsize=(5, 3))
-        ax.hist(hazard_values, bins=30, alpha=0.75)
-        ax.axvline(np.percentile(hazard_values, 75), linestyle="--", label="Percentil 75")
-        ax.axvline(np.percentile(hazard_values, 90), linestyle=":", label="Percentil 90")
-        ax.set_xlabel("Hazard Index")
-        ax.set_ylabel("Frecuencia")
-        ax.legend()
+            
+            fig, ax = plt.subplots(figsize=(6, 4))
 
-        st.pyplot(fig)
-        plt.close(fig)
+            ax.hist(hazard_values, bins=30, alpha=0.75)
+            ax.axvline(np.percentile(hazard_values, 75), linestyle="--", label="Percentil 75")
+            ax.axvline(np.percentile(hazard_values, 90), linestyle=":", label="Percentil 90")
+            ax.set_xlabel("Hazard Index")
+            ax.set_ylabel("Frecuencia")
+            ax.legend()
+
+            st.pyplot(fig)
+            plt.close(fig)
 
 
         st.markdown(
@@ -748,7 +780,7 @@ if mode == "Análisis por capas":
         # ---------------------------------------------------------
 
         with col1:
-            st.markdown("### Relación con la cantidad de microplásticos")
+            st.markdown("#### Relación con la cantidad de microplásticos")
 
             x = hazard_gdf["hazard_pressure"]
             y = hazard_gdf["hazard_index"]
@@ -777,7 +809,7 @@ if mode == "Análisis por capas":
         # ---------------------------------------------------------
 
         with col2:
-            st.markdown("### Influencia de la composición morfológica")
+            st.markdown("#### Influencia de la composición morfológica")
 
             x = hazard_gdf["hazard_morphology"]
             y = hazard_gdf["hazard_index"]
@@ -804,7 +836,7 @@ if mode == "Análisis por capas":
         # 4. BLOQUE INTERACTIVO — MORFOLOGÍA (CON PESOS EXPLÍCITOS)
         # =========================================================
 
-        st.subheader("🧩 ¿Cómo influye la composición de formas?")
+        st.subheader("¿Cómo influye la composición de formas?")
 
         st.markdown(
             """
@@ -858,19 +890,23 @@ if mode == "Análisis por capas":
                 "Índice morfológico resultante",
                 f"{hazard_morph_user:.2f}"
             )
+            col_plot2, _ = st.columns([2, 1])
+            with col_plot2:
 
-            fig, ax = plt.subplots(figsize=(4, 3))
-            ax.bar(
-                weighted_contrib.keys(),
-                weighted_contrib.values(),
-                color=["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
-            )
-            ax.set_ylabel("Contribución al riesgo morfológico")
-            ax.set_ylim(0, 1)
-            ax.set_title("Contribución ponderada por forma")
+            
+                fig, ax = plt.subplots(figsize=(6, 4))
+                
+                ax.bar(
+                    weighted_contrib.keys(),
+                    weighted_contrib.values(),
+                    color=["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
+                )
+                ax.set_ylabel("Contribución al riesgo morfológico")
+                ax.set_ylim(0, 1)
+                ax.set_title("Contribución ponderada por forma")
 
-            st.pyplot(fig)
-            plt.close(fig)
+                st.pyplot(fig)
+                plt.close(fig)
 
 
         # -------------------------------
@@ -909,7 +945,7 @@ if mode == "Análisis por capas":
         # 5. CONTRIBUCIÓN RELATIVA (GRÁFICO REAL)
         # =========================================================
 
-        st.subheader("⚖️ Contribución relativa de presión y morfología")
+        st.subheader("Contribución relativa de presión y morfología")
 
         st.markdown(
             """
@@ -920,29 +956,33 @@ if mode == "Análisis por capas":
             cuando cambia cada componente.
             """
         )
+        col_plot2, _ = st.columns([2, 1])
+        with col_plot2:
 
-        fig, ax = plt.subplots(figsize=(5, 3))
+            
+            fig, ax = plt.subplots(figsize=(6, 4))
 
-        sm_p = lowess(
-            hazard_gdf["hazard_index"],
-            hazard_gdf["hazard_pressure"],
-            frac=0.3
-        )
-        sm_m = lowess(
-            hazard_gdf["hazard_index"],
-            hazard_gdf["hazard_morphology"],
-            frac=0.3
-        )
 
-        ax.plot(sm_p[:, 0], sm_p[:, 1], label="Variación con la presión", linewidth=2)
-        ax.plot(sm_m[:, 0], sm_m[:, 1], label="Variación con la morfología", linewidth=2)
+            sm_p = lowess(
+                hazard_gdf["hazard_index"],
+                hazard_gdf["hazard_pressure"],
+                frac=0.3
+            )
+            sm_m = lowess(
+                hazard_gdf["hazard_index"],
+                hazard_gdf["hazard_morphology"],
+                frac=0.3
+            )
 
-        ax.set_xlabel("Componente del índice (escala propia)")
-        ax.set_ylabel("Hazard Index")
-        ax.legend()
+            ax.plot(sm_p[:, 0], sm_p[:, 1], label="Variación con la presión", linewidth=2)
+            ax.plot(sm_m[:, 0], sm_m[:, 1], label="Variación con la morfología", linewidth=2)
 
-        st.pyplot(fig)
-        plt.close(fig)
+            ax.set_xlabel("Componente del índice (escala propia)")
+            ax.set_ylabel("Hazard Index")
+            ax.legend()
+
+            st.pyplot(fig)
+            plt.close(fig)
 
 
         st.caption(
@@ -952,7 +992,7 @@ if mode == "Análisis por capas":
         # 6. CALCULADORA INTERACTIVA DEL HAZARD INDEX
         # =========================================================
 
-        st.subheader("🧮 Calculadora del Hazard Index")
+        st.subheader("Calculadora del Hazard Index")
 
         st.markdown(
             """
@@ -971,7 +1011,7 @@ if mode == "Análisis por capas":
         # Input: presión por microplásticos
         # ---------------------------------------------------------
 
-        st.markdown("### 1️⃣ Presión por microplásticos")
+        st.markdown("#### 1. Presión por microplásticos")
 
         # Usamos el rango observado real
         p_min = hazard_gdf["hazard_pressure"].min()
@@ -994,7 +1034,7 @@ if mode == "Análisis por capas":
         # Input: morfología (ya calculada antes)
         # ---------------------------------------------------------
 
-        st.markdown("### 2️⃣ Composición morfológica")
+        st.markdown("#### 2. Composición morfológica")
 
         st.write(
             f"Índice presión morfológico seleccionado: **{hazard_morph_user:.2f}**"
@@ -1019,7 +1059,7 @@ if mode == "Análisis por capas":
         # Interpretación
         # ---------------------------------------------------------
 
-        st.markdown("### 📊 Resultado")
+        st.markdown("#### Resultado")
 
         # Percentil respecto a valores observados
         hazard_dist = hazard_gdf["hazard_index"].dropna().values
@@ -1097,7 +1137,7 @@ if mode == "Análisis por capas":
         # DEFINICIÓN DEL ESCENARIO ECOLÓGICO
         # =========================================================
 
-        st.subheader("🔧 Definir escenario ecológico")
+        st.subheader("Definir escenario ecológico")
 
         col1, col2 = st.columns(2)
 
@@ -1168,7 +1208,7 @@ if mode == "Análisis por capas":
         # MORFOLOGÍA — PROPORCIONES (suma automática = 100)
         # =========================================================
 
-        st.subheader("🧩 Composición morfológica de los microplásticos")
+        st.markdown("##### Composición morfológica de los microplásticos")
 
         col_left, col_right = st.columns([2, 1])  # sliders más espacio que el gráfico
 
@@ -1240,7 +1280,7 @@ if mode == "Análisis por capas":
         # RESULTADOS ECOLÓGICOS
         # =========================================================
 
-        st.subheader("🌱 Resultados ecológicos esperados")
+        st.subheader("Resultados ecológicos esperados")
 
         col7, col8 = st.columns(2)
 
@@ -1318,7 +1358,7 @@ if mode == "Análisis por capas":
         # CONTEXTUALIZACIÓN GLOBAL DEL RIESGO
         # =========================================================
 
-        st.subheader("📊 Contextualización global del riesgo")
+        st.markdown("##### Contextualización global del riesgo")
 
         risk_dist = hazard_gdf["iucn_mean_risk"].dropna().values
         risk_value = eco_result_risk["iucn_mean_risk"]
@@ -1362,7 +1402,7 @@ if mode == "Análisis por capas":
         # =========================================================
         # COHERENCIA ECOLÓGICA OBSERVADA (MODELO A)
         # =========================================================
-        st.subheader(("🧩 COHERENCIA ECOLÓGICA OBSERVADA"))
+        st.subheader(("Coherencia ecológica observada"))
 
         st.markdown("¿Es habitual observar hazard alto en este contexto ecológico?")
 
@@ -1460,7 +1500,7 @@ if mode == "Análisis por capas":
         # BLOQUE FINAL — PROYECCIÓN ECOLÓGICA GLOBAL
         # =========================================================
 
-        st.subheader("🌍 Proyección ecológica global")
+        st.subheader("Proyección ecológica global")
 
         st.markdown(
             """
@@ -1500,8 +1540,6 @@ if mode == "Análisis por capas":
         # =========================================================
         # SELECTOR DE VARIABLE MOSTRADA
         # =========================================================
-
-        st.markdown("### 🎨 Variable mostrada en el mapa")
 
         color_var_label = st.radio(
             "",
@@ -1695,29 +1733,18 @@ if mode == "Análisis por capas":
 
 
 elif mode == "Flujo interactivo":
-    st.markdown(
-        "<h2 style=color:#1f77b4;'>Inputs del escenario</h2>",
-        unsafe_allow_html=True
-    )
+    
+    st.subheader("Inputs del escenario")
 
     st.markdown(
         """
-        <div style="
-            font-size: 16px;
-            color: #777777;
-            line-height: 1.4;
-        ">
-            Define aquí el escenario de riesgo asociado al punto seleccionado.
-            <br><br>
-            <ul style="padding-left: 16px; margin: 0;">
-                <li>Selecciona un punto en el mapa.</li>
-                <li>Revisa la concentración estimada de microplásticos.</li>
-                <li>Elige la composición morfológica.</li>
-                <li>Interpreta riesgo e implicaciones ecológicas.</li>
-            </ul>
-        </div>
-        """,
-        unsafe_allow_html=True
+        Define aquí el escenario de riesgo asociado al punto seleccionado.
+
+        - Selecciona un punto en el mapa.
+        - Revisa la concentración estimada de microplásticos.
+        - Elige la composición morfológica.
+        - Interpreta riesgo e implicaciones ecológicas.
+        """
     )
 
     st.header("Selección espacial")
@@ -1752,23 +1779,6 @@ elif mode == "Flujo interactivo":
         opacity=0.6,
         name="Microplásticos (log)"
     ).add_to(m)
-
-    control_points = {
-        "Madrid": (40.4168, -3.7038),
-        "Quito": (0.0, -78.4678),
-        "Greenwich": (51.48, 0.0),
-        "Cabo": (-33.92, 18.42)
-    }
-
-    for name, (lat, lon) in control_points.items():
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=4,
-            color="black",
-            fill=True,
-            fill_opacity=1,
-            tooltip=name
-        ).add_to(m)
 
     
     if st.session_state.clicked_point is not None:
@@ -1828,8 +1838,6 @@ elif mode == "Flujo interactivo":
             feature_names=FEATURES
         )
         ocean_profile = result["profile_eco"]
-        st.write("Índice de celda:", result["cell_index"])
-        st.write("Perfil:", result["profile_eco"])
         # OUTPUTS
 
         st.subheader("Resultado")
@@ -2136,7 +2144,7 @@ elif mode == "Flujo interactivo":
     mp_real = st.session_state.mp_real
     rf_risk, rf_species = get_ecology_models()
     # Checkbox para activar exploración
-    
+    st.sidebar.markdown("---")
     st.sidebar.markdown("## Escenario ecológico")
 
     explore_ecology = st.sidebar.checkbox(
@@ -2304,16 +2312,20 @@ elif mode == "Flujo interactivo":
         "Este resultado no representa un efecto causal directo de los microplásticos sobre las especies, sino una estimación de las implicaciones ecológicas potenciales asociadas a niveles de presión por microplásticos bajo condiciones ambientales similares a las observadas"
     )
     
+    col_plot, _ = st.columns([2, 1])
+    with col_plot:
 
-    fig, ax = plt.subplots(figsize=(2.8, 1.9))
-    ax.hist(risk_dist, bins=30, alpha=0.7)
-    ax.axvline(risk_pred, color="red", linewidth=2)
-    ax.set_xlabel("iucn_mean_risk observado")
-    ax.set_ylabel("Frecuencia")
-    ax.set_title("Distribución global del riesgo ecológico")
+            
+        fig, ax = plt.subplots(figsize=(6, 4))
+    
+        ax.hist(risk_dist, bins=30, alpha=0.7)
+        ax.axvline(risk_pred, color="red", linewidth=2)
+        ax.set_xlabel("iucn_mean_risk observado")
+        ax.set_ylabel("Frecuencia")
+        ax.set_title("Distribución global del riesgo ecológico")
 
-    st.pyplot(fig)
-    plt.close(fig)
+        st.pyplot(fig)
+        plt.close(fig)
 
 
     st.write(
