@@ -423,7 +423,7 @@ if mode == "Análisis por capas":
                         "lon",
                         "microplastics_measurement",
                         "log_microplastics"
-                    ]].head(200)
+                    ]].head(50)
                 )
         # TAB 2: Clusters
         
@@ -540,18 +540,24 @@ if mode == "Análisis por capas":
                 plot_data = mp_parquet["microplastics_measurement"]
                 xlabel = "Microplásticos items/m³"
             
-            fig, ax = plt.subplots()
-            ax.hist(
-                plot_data,
-                bins=40,
-                color="#1f77b4",
-                alpha=0.8
-            )
-            ax.set_xlabel(xlabel)
-            ax.set_ylabel("Frecuencia")
+            col_plot2, _ = st.columns([2, 1])
+            with col_plot2:
 
-            st.pyplot(fig)
-            plt.close(fig)
+            
+                fig, ax = plt.subplots(figsize=(6, 4))
+
+                ax.hist(
+                    plot_data,
+                    bins=40,
+                    color="#1f77b4",
+                    alpha=0.8
+                )
+                ax.set_xlabel(xlabel)
+                ax.tick_params(axis="x", rotation=10)
+                ax.set_ylabel("Frecuencia")
+
+                st.pyplot(fig)
+                plt.close(fig)
 
 
             with st.expander("¿Cómo interpretar este histograma?"):
@@ -563,17 +569,9 @@ if mode == "Análisis por capas":
                     """
                 )
 
-            st.markdown(
-                f"""
-                - Número de muestras: **{len(mp_parquet["microplastics_measurement"].dropna())}**
-                - Concentración media: **{mp_parquet["microplastics_measurement"].mean():.2f} items/m³**
-                - Concentración mediana: **{mp_parquet["microplastics_measurement"].median():.2f} items/m³**
-                - Percentil 90: **{np.percentile(mp_parquet["microplastics_measurement"].dropna(), 90):.2f} items/m³**
-                """
-            )
 
         
-            st.dataframe(mp_parquet.head(200))
+            st.dataframe(mp_parquet.head(50))
 
         # TAB 4: Costa
         with tab4:
@@ -593,23 +591,27 @@ if mode == "Análisis por capas":
                 labels=labels,
             )
 
-            fig, ax = plt.subplots()
+            col_plot2, _ = st.columns([2, 1])
+            with col_plot2:
+
             
-            mp_parquet.boxplot(
-                column="log_microplastics",
-                by="coastal_band",
-                ax=ax,
-                grid=False,
-                showfliers=True
-            )
+                fig, ax = plt.subplots(figsize=(6, 4))
+            
+                mp_parquet.boxplot(
+                    column="log_microplastics",
+                    by="coastal_band",
+                    ax=ax,
+                    grid=False,
+                    showfliers=True
+                )
 
-            ax.set_xlabel("Distancia a la costa")
-            ax.set_ylabel("Log(Microplásticos items/m³)")
-            ax.set_title("Concentración de microplásticos según distancia a la costa")
-            plt.suptitle("")
+                ax.set_xlabel("Distancia a la costa")
+                ax.set_ylabel("Log(Microplásticos items/m³)")
+                ax.set_title("Concentración de microplásticos según distancia a la costa")
+                plt.suptitle("")
 
-            st.pyplot(fig)
-            plt.close(fig)
+                st.pyplot(fig)
+                plt.close(fig)
 
 
             with st.expander("¿Cómo interpretar este gráfico?"):
@@ -636,23 +638,27 @@ if mode == "Análisis por capas":
                 index=0
             )
 
-            fig, ax = plt.subplots()
+            col_plot2, _ = st.columns([2, 1])
+            with col_plot2:
 
-            ax.scatter(
-                mp_parquet[env_var],
-                mp_parquet["log_microplastics"],
-                alpha=0.5,
-                s=20,
-                color="#1f77b4"
-            )
-            ax.set_xlabel(f"{ENV_VARS_META[env_var]['label']}")
-            ax.set_ylabel("Log(Microplásticos items/m³)")
-            ax.set_title(
-                f"Microplásticos vs {ENV_VARS_META[env_var]['label']}"
-            )
+            
+                fig, ax = plt.subplots(figsize=(6, 4))
 
-            st.pyplot(fig)
-            plt.close(fig)
+                ax.scatter(
+                    mp_parquet[env_var],
+                    mp_parquet["log_microplastics"],
+                    alpha=0.5,
+                    s=20,
+                    color="#1f77b4"
+                )
+                ax.set_xlabel(f"{ENV_VARS_META[env_var]['label']}")
+                ax.set_ylabel("Log(Microplásticos items/m³)")
+                ax.set_title(
+                    f"Microplásticos vs {ENV_VARS_META[env_var]['label']}"
+                )
+
+                st.pyplot(fig)
+                plt.close(fig)
 
 
             with st.expander("¿Cómo interpretar este gráfico?"):
