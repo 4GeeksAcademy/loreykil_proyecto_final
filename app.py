@@ -1570,6 +1570,22 @@ if mode == "Análisis por capas":
         )
 
         # =========================================================
+        # LEYENDA (SOLO LA DEL MAPA ACTIVO)
+        # =========================================================
+
+        if color_var_label == "Riesgo ecológico medio (IUCN)":
+            st.image(
+                "./notebooks/leyenda_mean_risk.png",
+                width=500
+            )
+
+        else:
+            st.image(
+                "./notebooks/leyenda_species_count.png",
+                width=500
+            )
+
+        # =========================================================
         # GESTIÓN DEL CLICK
         # =========================================================
 
@@ -1675,6 +1691,8 @@ if mode == "Análisis por capas":
             similares, aprendidos a partir de datos globales.
             """
         )
+
+
 
 elif mode == "Flujo interactivo":
     st.markdown(
