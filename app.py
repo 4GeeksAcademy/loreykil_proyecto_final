@@ -48,12 +48,40 @@ st.set_page_config(
     page_title="Modelado espacial de microplásticos y análisis de presión ecológica",
     layout="wide"
 )
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap');
 
-st.title("Modelado espacial de microplásticos y análisis de presión ecológica")
+    html, body, [class*="css"] {
+        font-family: 'Source Sans 3', sans-serif;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <h1 style="
+        text-align: center;
+        font-size: 56px;
+        font-weight: 700;
+        color: #1e2b26;
+        margin-bottom: 0.25em;
+        letter-spacing: 0.6px;
+        text-transform: none;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.05);   
+    ">
+        Modelado espacial de microplásticos y análisis de presión ecológica
+    </h1>
+    """,
+    unsafe_allow_html=True
+)
 st.sidebar.markdown("## Modo de visualización")
 mode = st.sidebar.radio(
     "",
-    ["Flujo interactivo", "Análisis por capas"],
+    ["Análisis por capas", "Flujo interactivo"]
 )
 
 
@@ -108,7 +136,9 @@ def get_mp_gdf():
 def get_mp_parquet():
     return pd.read_parquet(
         "./data/grid_ocean/NOAA_encology.parquet",
-    )@st.cache_resource
+    )
+
+@st.cache_resource
 def load_raster(path):
     return rasterio.open(path)
 
@@ -350,36 +380,1380 @@ def get_ecology_models():
 def get_land_polygons():
     return gpd.read_file("./data/ocean/ne_10m_land.shp").to_crs(epsg=4326)
 
+if mode == "Análisis por capas":
 
-if mode == "Flujo interactivo":
-    st.header("Selección espacial")
-    st.sidebar.markdown(
-        "<h2 style=color:#1f77b4;'>Inputs del escenario</h2>",
-        unsafe_allow_html=True
+
+    capa = st.radio(
+        "",
+        ["Microplásticos", "Índice", "Ecología"],
+        horizontal=True
     )
 
-    st.sidebar.markdown(
+    if capa == "Microplásticos":
+        mp_gdf = get_mp_gdf()
+        hazard_gdf = get_hazard_gdf()
+        st.header("Análisis de microplásticos")
+        st.markdown(
+            """
+            Esta sección explor los datos observados de microplásticos en el océano.
+            """
+        )
+
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+           "Mapa observado",
+           "Clusters",
+            "Distribución",
+            "Costa",
+            "Ambiente"
+        ])
+
+        # TAB 1: Mapa observado
+        with tab1:
+            st.subheader("Distribución espacial observada")
+
+            st.markdown(
+                """
+                Este mapa muestra la localización de las muestras de microplásticos utilizados en el análisis.
+                Cada punto representa una observación puntual.
+                """
+            )
+
+            # Preparar datos
+            mp_parquet = get_mp_parquet()
+            mp_parquet = mp_parquet[mp_parquet["microplastics_measurement"] > 0].copy()
+            mp_parquet["log_microplastics"] = np.log10(mp_parquet["microplastics_measurement"])
+
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=mp_parquet,
+                get_position="[lon, lat]",
+                get_radius=30000,
+                get_fill_color="[log_microplastics * 30 + 100, 100, 160, 160]",
+                pickable=True,
+            )
+
+            view_state = pdk.ViewState(
+                latitude=mp_parquet["lat"].mean(),
+                longitude=mp_parquet["lon"].mean(),
+                zoom=1,
+            )
+
+            st.pydeck_chart(
+                pdk.Deck(
+                    layers=[layer],
+                    initial_view_state=view_state,
+                    tooltip={
+                        "text": "Microplásticos (log): {log_microplastics}"
+                    },
+                )
+            )
+            with st.expander("Ver tabla de datos"):
+                st.dataframe(
+                    mp_parquet[[
+                        "lat",
+                        "lon",
+                        "microplastics_measurement",
+                        "log_microplastics"
+                    ]].head(50)
+                )
+        # TAB 2: Clusters
+        
+        with tab2:
+            st.subheader("Microplásticos y perfiles ambientales")
+
+            st.markdown(
+                """
+                Explora las concentraciones de microplásticos
+                según los perfiles ambientales oceánicos definidos.
+                """
+            )
+
+            st.image("data/ocean/output.png", 
+                     width=750)
+            
+            col_plot, _ = st.columns([2, 1])
+            with col_plot:
+
+            
+                fig, ax = plt.subplots(figsize=(6, 4))
+
+                # Ordenar clusters para que el gráfico sea estable
+                clusters = sorted(mp_parquet["profile_eco"].dropna().unique())
+
+                ax.boxplot(
+                    [
+                        mp_parquet.loc[mp_parquet["profile_eco"] == c, "log_microplastics"]
+                        for c in clusters
+                    ],
+                    showfliers=True
+                )
+                ax.set_xticklabels(
+                    [PROFILE_LABELS.get(c, c) for c in clusters],
+                    rotation=30,
+                    ha="right"
+                )
+
+                ax.set_xlabel("Perfil ambiental oceánico")
+                ax.set_ylabel("Log(Microplásticos items/m³)")
+                ax.set_title("Concentración de microplásticos según perfil ambiental")
+
+                st.pyplot(fig)
+                plt.close(fig)
+
+
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                     - Los clusters agrupan puntos con condiciones ambientales similares.
+                     - Algunos perfiles muestran concentraciones típicas más altas o mayor variabilidad.
+                     - Estas diferencias no implican causalidad directa, sino asociaciones contextuales.
+                    """
+                )
+
+            # Tabla resumen
+            summary = (
+                mp_parquet
+                .groupby("profile_eco")["microplastics_measurement"]
+                .agg(
+                    n_observations="count",
+                    median="median",
+                    mean="mean",
+                )
+                .reset_index()
+            )
+            summary["Perfil ambiental"] = summary["profile_eco"].map(
+                lambda x: PROFILE_LABELS.get(x, x)
+            )
+
+            summary = summary[
+                [
+                    "Perfil ambiental",
+                    "n_observations",
+                    "median",
+                    "mean"
+                ]
+            ]
+            summary = summary.rename(
+                columns={
+                    "n_observations": "N",
+                    "median": "Mediana (items/m³)",
+                    "mean": "Media (items/m³)"
+                }
+            )
+
+
+            with st.expander("Ver resumen por cluster"):
+                st.dataframe(summary)       
+        
+
+        # TAB 3: Distribución
+        with tab3:
+            st.subheader("Distribución de concentraciones")
+            scale = st.radio(
+                "Escala",
+                ["Lineal", "Logarítmica"],
+                horizontal=True,
+                help=(
+                    "La escala logarítmica se utiliza porque las concentraciones de microplásticos "
+                    "presentan valores extremos. Esta escala permite visualizar mejor "
+                    "la distribución general sin que los valores muy altos dominen el gráfico."
+
+                )
+            )
+            
+            data = mp_parquet["microplastics_measurement"].dropna()
+            if scale == "Logarítmica":
+                data = mp_parquet["log_microplastics"]
+                plot_data = mp_parquet["log_microplastics"]
+                xlabel = "Log(Microplásticos items/m³)"
+            else:
+                plot_data = mp_parquet["microplastics_measurement"]
+                xlabel = "Microplásticos items/m³"
+            
+            col_plot2, _ = st.columns([2, 1])
+            with col_plot2:
+
+            
+                fig, ax = plt.subplots(figsize=(6, 4))
+
+                ax.hist(
+                    plot_data,
+                    bins=40,
+                    color="#1f77b4",
+                    alpha=0.8
+                )
+                ax.set_xlabel(xlabel)
+                ax.tick_params(axis="x", rotation=10)
+                ax.set_ylabel("Frecuencia")
+
+                st.pyplot(fig)
+                plt.close(fig)
+
+
+            with st.expander("¿Cómo interpretar este histograma?"):
+                st.markdown(
+                    """
+                    - La mayoría de las observaciones se concentran en valores bajos.
+                    - Existen valores extremos (hotspots) con concentraciones muy elevadas.
+                    - La escala logarítmica ayuda a visualizar mejor la distribución general.
+                    """
+                )
+
+
+        
+            st.dataframe(mp_parquet.head(50))
+
+        # TAB 4: Costa
+        with tab4:
+            st.subheader("Microplásticos y distancia a la costa")
+            
+            st.markdown(
+                "Comparación de concentraciones según la proximidad a la costa."
+            )
+
+            bins = [0, 50, 200, np.inf]
+            labels = ["0-50 km", "51-200 km", ">200 km"]
+
+            mp_parquet = mp_parquet.copy()
+            mp_parquet["coastal_band"] = pd.cut(
+                mp_parquet["distance_to_coast_km"],
+                bins=bins,
+                labels=labels,
+            )
+
+            col_plot2, _ = st.columns([2, 1])
+            with col_plot2:
+
+            
+                fig, ax = plt.subplots(figsize=(6, 4))
+            
+                mp_parquet.boxplot(
+                    column="log_microplastics",
+                    by="coastal_band",
+                    ax=ax,
+                    grid=False,
+                    showfliers=True
+                )
+
+                ax.set_xlabel("Distancia a la costa")
+                ax.set_ylabel("Log(Microplásticos items/m³)")
+                ax.set_title("Concentración de microplásticos según distancia a la costa")
+                plt.suptitle("")
+
+                st.pyplot(fig)
+                plt.close(fig)
+
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                    - Las tres categorías muestran concentraciones bajas en la mayoría de observaciones
+                    - Sin embargo, existen valores extremos en todas las distancias.
+                    - Distribución asimétrica. Hotspots localizados.                   
+                    """
+                )
+
+        # TAB 5: Ambiente
+        with tab5:
+            st.subheader("Microplásticos y variables ambientales")
+
+            st.markdown(
+                "Explora las concentraciones de microplásticos "
+                "en función de las variables ambientales medidas."
+            )
+
+            env_var = st.selectbox(
+                "Selecciona una variable ambiental",
+                FEATURES,
+                index=0
+            )
+
+            col_plot2, _ = st.columns([2, 1])
+            with col_plot2:
+
+            
+                fig, ax = plt.subplots(figsize=(6, 4))
+
+                ax.scatter(
+                    mp_parquet[env_var],
+                    mp_parquet["log_microplastics"],
+                    alpha=0.5,
+                    s=20,
+                    color="#1f77b4"
+                )
+                ax.set_xlabel(f"{ENV_VARS_META[env_var]['label']}")
+                ax.set_ylabel("Log(Microplásticos items/m³)")
+                ax.set_title(
+                    f"Microplásticos vs {ENV_VARS_META[env_var]['label']}"
+                )
+
+                st.pyplot(fig)
+                plt.close(fig)
+
+
+            with st.expander("¿Cómo interpretar este gráfico?"):
+                st.markdown(
+                    """
+                    - Las concentraciones de microplásticos no están controladas por una única 
+                    variable ambiental. Su distribución refleja la superposición de 
+                    múltiples procesos, fuentes, transporte, mezcla y acumulación, que generan 
+                    patrones complejos y heterogéneos.
+                    """
+                )
+
+        
+            
+    elif capa == "Índice":
+
+        hazard_gdf = get_hazard_gdf()
+
+        st.header("Análisis del Hazard Index")
+
+        st.markdown(
+            """
+            En esta sección se analiza cómo se comporta el **Hazard Index**, un indicador
+            que resume el riesgo potencial asociado a los microplásticos en el océano.
+
+            El objetivo no es evaluar un punto concreto, sino **entender qué valores son habituales,
+            de qué depende el índice y cómo debe interpretarse**.
+            """
+        )
+
+        # =========================================================
+        # 1. ¿Qué es el Hazard Index?
+        # =========================================================
+
+        st.subheader("¿Qué es el Hazard Index?")
+
+        st.markdown(
+            """
+            El **Hazard Index** es una medida normalizada entre **0 (riesgo bajo)** y
+            **1 (riesgo alto)** que combina:
+
+            - La **cantidad de microplásticos** presentes (presión)
+            - La **composición morfológica** de esos microplásticos
+
+            Permite comparar regiones oceánicas en términos de **riesgo potencial**,
+            pero **no representa un impacto ecológico directo**.
+            """
+        )
+
+        # =========================================================
+        # 2. Distribución global
+        # =========================================================
+
+        st.subheader("¿Qué valores del Hazard Index son habituales?")
+
+        hazard_values = hazard_gdf["hazard_index"].dropna().values
+        col_plot2, _ = st.columns([2, 1])
+        with col_plot2:
+
+            
+            fig, ax = plt.subplots(figsize=(6, 4))
+
+            ax.hist(hazard_values, bins=30, alpha=0.75)
+            ax.axvline(np.percentile(hazard_values, 75), linestyle="--", label="Percentil 75")
+            ax.axvline(np.percentile(hazard_values, 90), linestyle=":", label="Percentil 90")
+            ax.set_xlabel("Hazard Index")
+            ax.set_ylabel("Frecuencia")
+            ax.legend()
+
+            st.pyplot(fig)
+            plt.close(fig)
+
+
+        st.markdown(
+            """
+            La mayoría de las regiones oceánicas presentan valores bajos o moderados.
+            Los valores altos son menos frecuentes y representan situaciones más extremas.
+            """
+        )
+
+        # =========================================================
+        # 3. Dependencia con presión y morfología
+        # =========================================================
+
+        st.subheader("¿De qué depende el Hazard Index?")
+
+        col1, col2 = st.columns(2)
+
+        # ---------------------------------------------------------
+        # 3.1 Presión
+        # ---------------------------------------------------------
+
+        with col1:
+            st.markdown("#### Relación con la cantidad de microplásticos")
+
+            x = hazard_gdf["hazard_pressure"]
+            y = hazard_gdf["hazard_index"]
+
+            fig, ax = plt.subplots()
+            ax.scatter(x, y, s=10, alpha=0.4)
+
+            # LOWESS
+            smoothed = lowess(y, x, frac=0.3)
+
+            ax.plot(smoothed[:, 0], smoothed[:, 1], color="red", linewidth=2)
+            ax.set_xlabel("Presión por microplásticos (normalizada)")
+            ax.set_ylabel("Hazard Index")
+
+            st.pyplot(fig)
+            plt.close(fig)
+
+
+            st.caption(
+                "A mayor presión por microplásticos, mayor Hazard Index en promedio, "
+                "aunque con variabilidad."
+            )
+
+        # ---------------------------------------------------------
+        # 3.2 Morfología
+        # ---------------------------------------------------------
+
+        with col2:
+            st.markdown("#### Influencia de la composición morfológica")
+
+            x = hazard_gdf["hazard_morphology"]
+            y = hazard_gdf["hazard_index"]
+
+            fig, ax = plt.subplots()
+            ax.scatter(x, y, s=10, alpha=0.4, color="darkgreen")
+
+            smoothed = lowess(y, x, frac=0.3)
+            ax.plot(smoothed[:, 0], smoothed[:, 1], color="black", linewidth=2)
+
+            ax.set_xlabel("Composición morfológica (índice)")
+            ax.set_ylabel("Hazard Index")
+
+            st.pyplot(fig)
+            plt.close(fig)
+
+
+            st.caption(
+                "La composición morfológica introduce diferencias claras en el nivel de riesgo, "
+                "incluso con cantidades similares de microplásticos."
+            )
+
+        # =========================================================
+        # 4. BLOQUE INTERACTIVO — MORFOLOGÍA (CON PESOS EXPLÍCITOS)
+        # =========================================================
+
+        st.subheader("¿Cómo influye la composición de formas?")
+
+        st.markdown(
+            """
+            La **composición morfológica** depende de la proporción relativa
+            de distintas formas de microplásticos.
+
+            No todas las formas contribuyen por igual al riesgo potencial:
+            algunas tienen **mayor peso** que otras.
+            """
+        )
+
+        col1, col2 = st.columns(2)
+
+        # -------------------------------
+        # Sliders (suma automática = 100)
+        # -------------------------------
+        with col1:
+            fibers = st.slider("Fibras", 0, 100, 40)
+            fragments = st.slider("Fragmentos", 0, 100 - fibers, 30)
+            spheres = st.slider(
+                "Esferas",
+                0,
+                100 - fibers - fragments,
+                20
+            )
+
+        others = 100 - (fibers + fragments + spheres)
+
+        proportions = {
+            "fibers": fibers / 100,
+            "fragments": fragments / 100,
+            "spheres": spheres / 100,
+            "others": others / 100,
+        }
+
+        # -------------------------------
+        # Índice morfológico
+        # -------------------------------
+        hazard_morph_user = compute_hazard_morphology_from_props(proportions)
+
+        # -------------------------------
+        # Contribución ponderada
+        # -------------------------------
+        weighted_contrib = {
+            k: proportions[k] * WEIGHTS[k]
+            for k in proportions
+        }
+
+        with col2:
+            st.metric(
+                "Índice morfológico resultante",
+                f"{hazard_morph_user:.2f}"
+            )
+            col_plot2, _ = st.columns([2, 1])
+            with col_plot2:
+
+            
+                fig, ax = plt.subplots(figsize=(6, 4))
+                
+                ax.bar(
+                    weighted_contrib.keys(),
+                    weighted_contrib.values(),
+                    color=["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
+                )
+                ax.set_ylabel("Contribución al riesgo morfológico")
+                ax.set_ylim(0, 1)
+                ax.set_title("Contribución ponderada por forma")
+
+                st.pyplot(fig)
+                plt.close(fig)
+
+
+        # -------------------------------
+        # Texto explicativo NO TÉCNICO
+        # -------------------------------
+
+        st.markdown(
+            """
+            **¿Por qué algunas barras llegan más alto que otras?**
+
+            Aunque dos formas estén presentes en la misma proporción,
+            **no contribuyen igual al riesgo potencial**.
+
+            - Las **fibras** tienen el mayor peso relativo, por lo que
+            su contribución puede alcanzar valores cercanos al **100%**
+            del riesgo morfológico.
+            - Los **fragmentos** tienen un peso intermedio, por lo que su
+            contribución máxima es menor (alrededor del **60–70%**).
+            - Las **esferas** y otros tipos tienen pesos más bajos y,
+            por tanto, su contribución al riesgo es menor, incluso si
+            están presentes en cantidades similares.
+
+            Este enfoque permite reflejar que **no todas las formas de
+            microplásticos tienen el mismo potencial de riesgo**.
+            """
+        )
+
+        st.info(
+            "Este análisis muestra únicamente el **componente morfológico del riesgo**. "
+            "El Hazard Index completo combina este componente con la cantidad total "
+            "de microplásticos presente."
+        )
+
+
+        # =========================================================
+        # 5. CONTRIBUCIÓN RELATIVA (GRÁFICO REAL)
+        # =========================================================
+
+        st.subheader("Contribución relativa de presión y morfología")
+
+        st.markdown(
+            """
+            El Hazard Index surge de la combinación de **presión por microplásticos**
+            y **composición morfológica**.
+
+            Las curvas siguientes muestran cómo varía el Hazard Index observado
+            cuando cambia cada componente.
+            """
+        )
+        col_plot2, _ = st.columns([2, 1])
+        with col_plot2:
+
+            
+            fig, ax = plt.subplots(figsize=(6, 4))
+
+
+            sm_p = lowess(
+                hazard_gdf["hazard_index"],
+                hazard_gdf["hazard_pressure"],
+                frac=0.3
+            )
+            sm_m = lowess(
+                hazard_gdf["hazard_index"],
+                hazard_gdf["hazard_morphology"],
+                frac=0.3
+            )
+
+            ax.plot(sm_p[:, 0], sm_p[:, 1], label="Variación con la presión", linewidth=2)
+            ax.plot(sm_m[:, 0], sm_m[:, 1], label="Variación con la morfología", linewidth=2)
+
+            ax.set_xlabel("Componente del índice (escala propia)")
+            ax.set_ylabel("Hazard Index")
+            ax.legend()
+
+            st.pyplot(fig)
+            plt.close(fig)
+
+
+        st.caption(
+            "Ambos factores contribuyen al riesgo potencial, de forma complementaria."
+        )
+        # =========================================================
+        # 6. CALCULADORA INTERACTIVA DEL HAZARD INDEX
+        # =========================================================
+
+        st.subheader("Calculadora del Hazard Index")
+
+        st.markdown(
+            """
+            En este apartado puedes **explorar cómo se obtiene un valor del Hazard Index**
+            a partir de sus dos componentes principales:
+
+            - **Presión por microplásticos** (cantidad)
+            - **Composición morfológica** (tipo de microplásticos)
+
+            El valor calculado se compara con los valores **realmente observados**
+            en el océano.
+            """
+        )
+
+        # ---------------------------------------------------------
+        # Input: presión por microplásticos
+        # ---------------------------------------------------------
+
+        st.markdown("#### 1. Presión por microplásticos")
+
+        # Usamos el rango observado real
+        p_min = hazard_gdf["hazard_pressure"].min()
+        p_max = hazard_gdf["hazard_pressure"].max()
+
+        hazard_pressure_user = st.slider(
+            "Nivel de presión por microplásticos (normalizado)",
+            min_value=float(p_min),
+            max_value=float(p_max),
+            value=float(np.median(hazard_gdf["hazard_pressure"])),
+            step=0.01,
+        )
+
+        st.caption(
+            "Este valor representa la cantidad relativa de microplásticos, "
+            "normalizada a partir de observaciones reales."
+        )
+
+        # ---------------------------------------------------------
+        # Input: morfología (ya calculada antes)
+        # ---------------------------------------------------------
+
+        st.markdown("#### 2. Composición morfológica")
+
+        st.write(
+            f"Índice presión morfológico seleccionado: **{hazard_morph_user:.2f}**"
+        )
+
+        # ---------------------------------------------------------
+        # Cálculo del Hazard Index
+        # ---------------------------------------------------------
+
+        # ⚠️ IMPORTANTE:
+        # Usamos la misma función lógica que en la construcción del índice.
+        # Aquí asumimos combinación multiplicativa normalizada.
+        hazard_morph_user = float(hazard_morph_user)
+        hazard_pressure_user = float(hazard_pressure_user)
+
+        hazard_index_user = (
+            0.5 * hazard_pressure_user
+            + 0.5 * hazard_morph_user
+        )
+
+        # ---------------------------------------------------------
+        # Interpretación
+        # ---------------------------------------------------------
+
+        st.markdown("#### Resultado")
+
+        # Percentil respecto a valores observados
+        hazard_dist = hazard_gdf["hazard_index"].dropna().values
+        percentile = (hazard_dist < hazard_index_user).mean() * 100
+
+        st.metric(
+            label="Hazard Index estimado",
+            value=f"{hazard_index_user:.2f}",
+        )
+
+        # Clasificación semántica (coherente con Jenks)
+        if hazard_index_user <= np.percentile(hazard_dist, 33):
+            label = "Bajo"
+            color = "green"
+        elif hazard_index_user <= np.percentile(hazard_dist, 66):
+            label = "Medio"
+            color = "orange"
+        else:
+            label = "Alto"
+            color = "red"
+
+        st.markdown(
+            f"""
+            **Nivel estimado:**  
+            <span style="color:{color}; font-weight:600;">{label}</span>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            f"""
+            Este valor se sitúa aproximadamente en el **percentil {percentile:.1f}**
+            del Hazard Index observado en el océano.
+            """
+        )
+
+        # ---------------------------------------------------------
+        # Nota explicativa final
+        # ---------------------------------------------------------
+
+        st.info(
+            """
+            Este resultado es **explicativo**, no predictivo.
+
+            Muestra cómo la combinación de presión y composición morfológica
+            se traduce en un valor del Hazard Index, utilizando la misma lógica
+            empleada en su construcción original.
+            """
+        )
+
+        del hazard_gdf
+        import gc
+        gc.collect()
+
+
+    ###############################################
+
+    elif capa == "Ecología":
+
+        hazard_gdf = get_hazard_gdf()
+
+        st.header("Implicaciones ecológicas potenciales")
+
+        st.markdown(
+            """
+            En esta sección se exploran **implicaciones ecológicas potenciales**
+            bajo distintos **escenarios ambientales y de presión por microplásticos**.
+
+            El usuario define un escenario y el sistema estima dos indicadores
+            ecológicos complementarios.
+            """
+        )
+
+        # =========================================================
+        # DEFINICIÓN DEL ESCENARIO ECOLÓGICO
+        # =========================================================
+
+        st.subheader("Definir escenario ecológico")
+
+        col1, col2 = st.columns(2)
+
+        # ---------------------------------------------------------
+        # Presión por microplásticos (para mean_risk)
+        # ---------------------------------------------------------
+        with col1:
+            mp_dist = hazard_gdf["mp_pieces_m3"].dropna().values
+
+            mp_percentile = st.slider(
+                "Presión relativa por microplásticos",
+                min_value=1,
+                max_value=99,
+                value=50,
+                step=1,
+                help="Percentil observado de concentración de microplásticos"
+            )
+
+            mp_real = float(np.percentile(mp_dist, mp_percentile))
+
+        # ---------------------------------------------------------
+        # Hazard Index (para species_count)
+        # ---------------------------------------------------------
+        with col2:
+            hazard_values = hazard_gdf["hazard_index"].dropna().values
+
+            hazard_index = st.slider(
+                "Hazard Index",
+                min_value=float(hazard_values.min()),
+                max_value=float(hazard_values.max()),
+                value=float(np.median(hazard_values)),
+                step=0.01,
+                help="Índice sintético de riesgo por microplásticos"
+            )
+
+        # ---------------------------------------------------------
+        # Contexto ecológico (tamaño del microplástico y complejidad)
+        # ---------------------------------------------------------
+
+        col3, col4 = st.columns(2)
+
+        with col3:
+            eco_size_label = st.selectbox(
+                "Tamaño relativo de los microplásticos",
+                ["0–57 µm", "58–147 µm", "148–464 µm"],
+                index=1,
+                help="Rangos basados en percentiles observados"
+            )
+
+            ECO_SIZE_MAP = {
+                "0–57 µm": 53,
+                "58–147 µm": 147,
+                "148–464 µm": 464,
+            }
+
+            eco_count = ECO_SIZE_MAP[eco_size_label]
+
+        with col4:
+            eco_shape_richness = st.slider(
+                "Diversidad morfológica de microplásticos",
+                min_value=2,
+                max_value=4,
+                value=3,
+                help="Número de formas distintas presentes"
+            )
+
+        # =========================================================
+        # MORFOLOGÍA — PROPORCIONES (suma automática = 100)
+        # =========================================================
+
+        st.markdown("##### Composición morfológica de los microplásticos")
+
+        col_left, col_right = st.columns([2, 1])  # sliders más espacio que el gráfico
+
+        with col_left:
+
+            fibers = st.slider("Fibras", 0, 100, 40)
+            fragments = st.slider("Fragmentos", 0, 100 - fibers, 30)
+            spheres = st.slider(
+                "Esferas",
+                0,
+                100 - fibers - fragments,
+                20
+            )
+
+            others = 100 - (fibers + fragments + spheres)
+
+            proportions = {
+                "fibers": fibers / 100,
+                "fragments": fragments / 100,
+                "spheres": spheres / 100,
+                "others": others / 100,
+            }
+
+            st.caption(
+                f"Otros se ajusta automáticamente: **{others}%**"
+            )
+
+        # -------------------------------------------------
+        # Contribución ponderada (con pesos)
+        # -------------------------------------------------
+
+        weighted_morphology = {
+            k: proportions[k] * WEIGHTS[k]
+            for k in proportions
+        }
+
+        with col_right:
+            fig, ax = plt.subplots(figsize=(3, 2))
+            ax.bar(
+                weighted_morphology.keys(),
+                weighted_morphology.values(),
+                color=["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
+            )
+            ax.set_ylim(0, 1)
+            ax.set_title("Contribución por forma", fontsize=10)
+            ax.tick_params(axis="x", labelsize=8)
+            ax.tick_params(axis="y", labelsize=8)
+
+            st.pyplot(fig, use_container_width=False)
+            plt.close(fig)
+
+
+
+        st.caption(
+            "La contribución depende tanto de la proporción como del peso asignado "
+            "a cada forma. No todas las morfologías tienen el mismo potencial de riesgo."
+        )
+
+        # =========================================================
+        # VARIABLES FIJAS (baseline)
+        # =========================================================
+
+        eco_mean_size = 0
+        eco_small_ratio = 0
+        log_dist_m = 0
+        eco_dist_m = 0
+
+        # =========================================================
+        # RESULTADOS ECOLÓGICOS
+        # =========================================================
+
+        st.subheader("Resultados ecológicos esperados")
+
+        col7, col8 = st.columns(2)
+
+        # ---------------------------------------------------------
+        # 🅰️ Riesgo ecológico medio (modelo RAW)
+        # ---------------------------------------------------------
+        with col7:
+            eco_result_risk = predict_ecological_impact_index(
+                hazard_index=hazard_index,
+                mp_real=mp_real,
+                morphology=proportions,
+                eco_count=eco_count,
+                eco_shape_richness=eco_shape_richness,
+                eco_mean_size=eco_mean_size,
+                eco_small_ratio=eco_small_ratio,
+                log_dist_m=log_dist_m,
+                eco_dist_m=eco_dist_m,
+            )
+
+            st.metric(
+                "Riesgo ecológico medio esperado",
+                f"{eco_result_risk['iucn_mean_risk']:.2f} / 4"
+            )
+
+            st.caption(
+                "Este indicador responde principalmente a la presión por microplásticos "
+                "y a su composición."
+            )
+
+        # ---------------------------------------------------------
+        # 🅱️ Especies vulnerables (modelo INDEX)
+        # ---------------------------------------------------------
+        with col8:
+            eco_result_species = predict_ecological_impact_index(
+                hazard_index=hazard_index,
+                eco_count=eco_count,
+                eco_shape_richness=eco_shape_richness,
+                eco_mean_size=eco_mean_size,
+                eco_small_ratio=eco_small_ratio,
+                log_dist_m=log_dist_m,
+                eco_dist_m=eco_dist_m,
+            )
+
+            st.metric(
+                "Especies vulnerables potencialmente afectadas",
+                f"{eco_result_species['species_count']:.1f}"
+            )
+
+            st.caption(
+                "Este indicador depende del nivel global de Hazard Index "
+                "y del contexto ecológico."
+            )
+
+        # =========================================================
+        # EXPLICACIÓN FINAL (NO TÉCNICA)
+        # =========================================================
+
+        st.info(
+            """
+            **Cómo interpretar estos resultados**
+
+            • El **riesgo ecológico medio** refleja la intensidad potencial del impacto,
+            y responde principalmente a la **cantidad y tipo de microplásticos**.
+
+            • El número de **especies vulnerables** se asocia al **nivel global de hazard**
+            y a patrones ecológicos observados.
+
+            Ambos indicadores representan **dimensiones complementarias**
+            del impacto ecológico potencial.
+            """
+        )
+
+
+        # =========================================================
+        # CONTEXTUALIZACIÓN GLOBAL DEL RIESGO
+        # =========================================================
+
+        st.markdown("##### Contextualización global del riesgo")
+
+        risk_dist = hazard_gdf["iucn_mean_risk"].dropna().values
+        risk_value = eco_result_risk["iucn_mean_risk"]
+
+        percentile = (risk_dist < risk_value).mean() * 100
+
+        fig, ax = plt.subplots(figsize=(2.8, 1.9))
+
+        ax.hist(
+            risk_dist,
+            bins=22,
+            alpha=0.75,
+            color="#b0c4de"
+        )
+        ax.axvline(
+            risk_value,
+            color="red",
+            linewidth=1.2
+        )
+
+        ax.set_xlabel("Riesgo ecológico medio", fontsize=8)
+        ax.set_ylabel("Frecuencia", fontsize=8)
+        ax.tick_params(axis="both", labelsize=7)
+
+        st.pyplot(fig, use_container_width=False)
+        plt.close(fig)
+
+
+        st.markdown(
+            f"""
+            Este valor se sitúa aproximadamente en el
+            **percentil {percentile:.1f}** del riesgo ecológico observado
+            a escala global.
+            """
+        )
+
+        st.caption(
+            "Distribución basada en celdas con información ecológica observada."
+        )
+
+        # =========================================================
+        # COHERENCIA ECOLÓGICA OBSERVADA (MODELO A)
+        # =========================================================
+        st.subheader(("Coherencia ecológica observada"))
+
+        st.markdown("¿Es habitual observar hazard alto en este contexto ecológico?")
+
+        st.markdown(
+            """
+            Este bloque evalúa si, **dado un contexto ecológico concreto**,
+            es habitual observar **niveles elevados de presión por microplásticos**.
+
+            El resultado se basa en **patrones observados a escala global**
+            y **no implica causalidad directa**.
+            """
+        )
+
+        # ---------------------------------------------------------
+        # INPUTS ECOLÓGICOS DEL MODELO
+        # ---------------------------------------------------------
+
+        col_left, col_right = st.columns([2, 1])
+
+        with col_left:
+            eco_shape_richness = st.slider(
+                "Diversidad morfológica de microplásticos",
+                min_value=2,
+                max_value=4,
+                value=eco_shape_richness,
+                help="Número de formas distintas de microplásticos presentes"
+            )
+
+            vuln_level = st.slider(
+                "Nivel de amenaza (IUCN Red List)",  
+                min_value=1,
+                max_value=4,
+                value=2,
+                step=1,
+                help="Nivel de amenaza de las especies presentes"
+            )
+            # 🔑 Traducción ecológica coherente
+            ecotaxa_present = 1 if vuln_level >= 1 else 0
+            
+        with col_right:
+            vuln_table = pd.DataFrame({
+                "Código": [4, 3, 2, 1],
+                "Categoría IUCN": [
+                    "CR – Critically Endangered",
+                    "EN – Endangered",
+                    "VU – Vulnerable",
+                    "NT – Near Threatened"
+                ]
+            })
+
+            st.markdown("**Equivalencia IUCN**")
+            st.table(vuln_table)
+
+        # ---------------------------------------------------------
+        # CONSTRUCCIÓN DE FEATURES (MODELO A)
+        # ---------------------------------------------------------
+
+        hazard_prob = predict_hazard_coherence(
+            eco_shape_richness=eco_shape_richness,
+            ecotaxa_present=ecotaxa_present,
+            vuln=vuln_level,
+        )
+
+        # ---------------------------------------------------------
+        # OUTPUT
+        # ---------------------------------------------------------
+
+        st.metric(
+            "Probabilidad de observar hazard elevado",
+            f"{hazard_prob:.2f}"
+        )
+
+        st.caption(
+            """
+            Esta probabilidad refleja **patrones de co-ocurrencia observados**
+            entre contexto ecológico y presión por microplásticos.
+
+            No representa un efecto causal ni una predicción de impacto ecológico.
+            """
+        )
+
+        st.info(
+            """
+            Una probabilidad baja no implica ausencia de riesgo ecológico.
+
+            Indica que, en los datos observados, los contextos ecológicos
+            más diversos y con especies amenazadas **no suelen coincidir**
+            con niveles elevados de presión por microplásticos.
+
+            Este bloque evalúa **co-ocurrencia observada**, no impacto potencial.
+            """
+        )
+
+        # =========================================================
+        # BLOQUE FINAL — PROYECCIÓN ECOLÓGICA GLOBAL
+        # =========================================================
+
+        st.subheader("Proyección ecológica global")
+
+        st.markdown(
+            """
+            Este bloque muestra una **proyección espacial global** de las implicaciones
+            ecológicas potenciales asociadas a la presión por microplásticos.
+
+            A diferencia de los bloques anteriores, aquí no se exploran escenarios
+            hipotéticos, sino patrones espaciales aprendidos a partir de
+            **condiciones ambientales reales**.
+            """
+        )
+
+        # =========================================================
+        # CARGA DEL DATASET GLOBAL (SOLO PARA CONSULTAS LOCALES)
+        # =========================================================
+
+        gdf_global = get_global_ecology_gdf()
+
+        # Asegurar CRS geográfico (solo por seguridad)
+        if gdf_global.crs.to_epsg() != 4326:
+            gdf_global = gdf_global.to_crs(epsg=4326)
+
+        # Precalcular centroides una sola vez (rendimiento)
+        if "geometry_point" not in gdf_global.columns:
+            gdf_global["geometry_point"] = gdf_global.geometry.centroid
+
+        with open("./data/Predicciones/pred_iucn_mean_risk_bounds.json") as f:
+            bounds = json.load(f)
+
+        south, west, north, east = (
+            bounds["south"],
+            bounds["west"],
+            bounds["north"],
+            bounds["east"],
+        )
+
+        # =========================================================
+        # SELECTOR DE VARIABLE MOSTRADA
+        # =========================================================
+
+        color_var_label = st.radio(
+            "",
+            [
+                "Riesgo ecológico medio (IUCN)",
+                "Especies vulnerables (escala logarítmica)"
+            ],
+            horizontal=True
+        )
+
+        if color_var_label == "Riesgo ecológico medio (IUCN)":
+            raster_path = "./data/Predicciones/pred_iucn_mean_risk.png"
+            raster_label = "Riesgo ecológico medio proyectado (IUCN)"
+        else:
+            raster_path = "./data/Predicciones/pred_log_iucn_species_count.png"
+            raster_label = "Especies vulnerables potencialmente afectadas (log)"
+
+        # =========================================================
+        # LEER BOUNDS DESDE EL GEOTIFF (PARA POSICIONAR EL PNG)
+        # =========================================================
+        
+        if color_var_label == "Riesgo ecológico medio (IUCN)":
+            bounds_path = "./data/Predicciones/pred_iucn_mean_risk_bounds.json"
+        else:
+            bounds_path = "./data/Predicciones/pred_log_iucn_species_count_bounds.json"
+
+        with open(bounds_path) as f:
+            bounds = json.load(f)
+
+        south = bounds["south"]
+        west  = bounds["west"]
+        north = bounds["north"]
+        east  = bounds["east"]
+
+
+        # =========================================================
+        # CONSTRUCCIÓN DEL MAPA (PNG PRECOMPUTADO)
+        # =========================================================
+
+        m = folium.Map(
+            location=[0, 0],
+            zoom_start=2,
+            tiles="CartoDB voyager"
+        )
+
+        ImageOverlay(
+            image=raster_path,
+            bounds=[
+                [south, west],
+                [north, east]
+            ],
+            opacity=0.9,
+            interactive=False,
+            cross_origin=False,
+            zindex=1
+        ).add_to(m)
+        
+        # =========================================================
+        # RENDER DEL MAPA
+        # =========================================================
+
+        map_data = st_folium(
+            m,
+            width=900,
+            height=520,
+        )
+
+        # =========================================================
+        # LEYENDA (SOLO LA DEL MAPA ACTIVO)
+        # =========================================================
+
+        if color_var_label == "Riesgo ecológico medio (IUCN)":
+            st.image(
+                "./notebooks/leyenda_mean_risk.png",
+                width=500
+            )
+
+        else:
+            st.image(
+                "./notebooks/leyenda_species_count.png",
+                width=500
+            )
+
+        # =========================================================
+        # GESTIÓN DEL CLICK
+        # =========================================================
+
+        if map_data and map_data.get("last_clicked"):
+            new_click = {
+                "lat": map_data["last_clicked"]["lat"],
+                "lng": map_data["last_clicked"]["lng"]
+            }
+
+            if st.session_state.get("global_click") != new_click:
+                st.session_state.global_click = new_click
+                st.rerun()
+
+        # =========================================================
+        # OUTPUT LOCAL + TABLA AMBIENTAL
+        # =========================================================
+
+        if "global_click" in st.session_state:
+
+            lat = st.session_state.global_click["lat"]
+            lng = st.session_state.global_click["lng"]
+
+            st.markdown("### 📍 Resultado local")
+
+            # -----------------------------------------------------
+            # CONTEXTO DESDE gdf_global (YA LIMPIO DE TIERRA)
+            # -----------------------------------------------------
+
+            point = Point(lng, lat)
+
+            distances = gdf_global["geometry_point"].distance(point)
+            idx = distances.idxmin()
+            row = gdf_global.loc[idx]
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.metric(
+                    "Riesgo ecológico medio proyectado",
+                    f"{row['pred_iucn_mean_risk']:.2f} / 4"
+                )
+
+            with col2:
+                st.metric(
+                    "Especies vulnerables potencialmente afectadas",
+                    f"{row['pred_iucn_species_count']:.1f}"
+                )
+
+            # -----------------------------------------------------
+            # CONTEXTUALIZACIÓN GLOBAL
+            # -----------------------------------------------------
+
+            risk_dist = gdf_global["pred_iucn_mean_risk"].values
+            percentile = (risk_dist < row["pred_iucn_mean_risk"]).mean() * 100
+
+            st.markdown(
+                f"""
+                Este valor se sitúa aproximadamente en el
+                **percentil {percentile:.1f}** del riesgo ecológico proyectado
+                a escala global.
+                """
+            )
+
+            # -----------------------------------------------------
+            # TABLA DE VARIABLES AMBIENTALES
+            # -----------------------------------------------------
+
+            st.markdown("### 🌊 Contexto ambiental local")
+
+            env_table = []
+
+            for k in FEATURES:
+                if k in row and k in gdf_global.columns:
+                    env_table.append({
+                        "Variable": ENV_VARS_META.get(k, {}).get("label", k),
+                        "Valor local": round(float(row[k]), 3),
+                        "Promedio global": round(float(gdf_global[k].mean()), 3),
+                        "Unidad": ENV_VARS_META.get(k, {}).get("unit", "-"),
+                    })
+
+            env_df = pd.DataFrame(env_table)
+
+            st.dataframe(
+                env_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.caption(
+                "La tabla muestra las condiciones ambientales en el punto seleccionado "
+                "comparadas con el promedio global oceánico."
+            )
+
+        # =========================================================
+        # AVISO FINAL
+        # =========================================================
+
+        st.info(
+            """
+            Esta proyección no representa observaciones directas ni impactos causales.
+
+            Muestra patrones espaciales esperables bajo condiciones ambientales
+            similares, aprendidos a partir de datos globales.
+            """
+        )
+
+
+
+elif mode == "Flujo interactivo":
+    
+    st.subheader("Inputs del escenario")
+
+    st.markdown(
         """
-        <div style="
-            font-size: 12px;
-            color: #777777;
-            line-height: 1.4;
-        ">
-            Define aquí el escenario de riesgo asociado al punto seleccionado.
-            <br><br>
-            <ul style="padding-left: 16px; margin: 0;">
-                <li>Selecciona un punto en el mapa.</li>
-                <li>Revisa la concentración estimada de microplásticos.</li>
-                <li>Elige la composición morfológica.</li>
-                <li>Interpreta riesgo e implicaciones ecológicas.</li>
-            </ul>
-        </div>
-        """,
-        unsafe_allow_html=True
+        Define aquí el escenario de riesgo asociado al punto seleccionado.
+
+        - Selecciona un punto en el mapa.
+        - Revisa la concentración estimada de microplásticos.
+        - Elige la composición morfológica.
+        - Interpreta riesgo e implicaciones ecológicas.
+        """
     )
 
+    st.header("Selección espacial")
+    
     st.sidebar.divider()
-    # INTERACCIÓN CAPA 1¡
+    # INTERACCIÓN CAPA 1
     st.write(
     "Selecciona un punto del océano para estimar la concentración "
     "esperada de microplásticos a partir de las condiciones oceánicas reales."
@@ -408,23 +1782,6 @@ if mode == "Flujo interactivo":
         opacity=0.6,
         name="Microplásticos (log)"
     ).add_to(m)
-
-    control_points = {
-        "Madrid": (40.4168, -3.7038),
-        "Quito": (0.0, -78.4678),
-        "Greenwich": (51.48, 0.0),
-        "Cabo": (-33.92, 18.42)
-    }
-
-    for name, (lat, lon) in control_points.items():
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=4,
-            color="black",
-            fill=True,
-            fill_opacity=1,
-            tooltip=name
-        ).add_to(m)
 
     
     if st.session_state.clicked_point is not None:
@@ -484,8 +1841,6 @@ if mode == "Flujo interactivo":
             feature_names=FEATURES
         )
         ocean_profile = result["profile_eco"]
-        st.write("Índice de celda:", result["cell_index"])
-        st.write("Perfil:", result["profile_eco"])
         # OUTPUTS
 
         st.subheader("Resultado")
@@ -792,7 +2147,7 @@ if mode == "Flujo interactivo":
     mp_real = st.session_state.mp_real
     rf_risk, rf_species = get_ecology_models()
     # Checkbox para activar exploración
-    
+    st.sidebar.markdown("---")
     st.sidebar.markdown("## Escenario ecológico")
 
     explore_ecology = st.sidebar.checkbox(
@@ -960,16 +2315,20 @@ if mode == "Flujo interactivo":
         "Este resultado no representa un efecto causal directo de los microplásticos sobre las especies, sino una estimación de las implicaciones ecológicas potenciales asociadas a niveles de presión por microplásticos bajo condiciones ambientales similares a las observadas"
     )
     
+    col_plot, _ = st.columns([2, 1])
+    with col_plot:
 
-    fig, ax = plt.subplots(figsize=(2.8, 1.9))
-    ax.hist(risk_dist, bins=30, alpha=0.7)
-    ax.axvline(risk_pred, color="red", linewidth=2)
-    ax.set_xlabel("iucn_mean_risk observado")
-    ax.set_ylabel("Frecuencia")
-    ax.set_title("Distribución global del riesgo ecológico")
+            
+        fig, ax = plt.subplots(figsize=(6, 4))
+    
+        ax.hist(risk_dist, bins=30, alpha=0.7)
+        ax.axvline(risk_pred, color="red", linewidth=2)
+        ax.set_xlabel("iucn_mean_risk observado")
+        ax.set_ylabel("Frecuencia")
+        ax.set_title("Distribución global del riesgo ecológico")
 
-    st.pyplot(fig)
-    plt.close(fig)
+        st.pyplot(fig)
+        plt.close(fig)
 
 
     st.write(
@@ -990,1316 +2349,7 @@ if mode == "Flujo interactivo":
 
     # CAPA 3 toma el hazard que ya calculamos y lo traduce en consecuencias ecológicas esperadas.
 
-elif mode == "Análisis por capas":
 
-
-    capa = st.radio(
-        "",
-        ["Microplásticos", "Índice", "Ecología"],
-        horizontal=True
-    )
-
-    if capa == "Microplásticos":
-        mp_gdf = get_mp_gdf()
-        hazard_gdf = get_hazard_gdf()
-        st.header("Análisis de microplásticos")
-        st.markdown(
-            """
-            Esta sección explor los datos observados de microplásticos en el océano.
-            """
-        )
-
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-           "Mapa observado",
-            "Distribución",
-            "Costa",
-            "Ambiente",
-            "Clusters"
-        ])
-
-        # TAB 1: Mapa observado
-        with tab1:
-            st.subheader("Distribución espacial observada")
-
-            st.markdown(
-                """
-                Este mapa muestra la localización de las muestras de microplásticos utilizados en el análisis.
-                Cada punto representa una observación puntual.
-                """
-            )
-
-            # Preparar datos
-            mp_parquet = get_mp_parquet().copy()
-            mp_parquet = mp_parquet[mp_gdf["microplastics_measurement"] > 0].copy()
-            mp_parquet["log_microplastics"] = np.log10(mp_parquet["microplastics_measurement"])
-
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                data=mp_parquet,
-                get_position="[lon, lat]",
-                get_radius=30000,
-                get_fill_color="[log_microplastics * 30 + 100, 100, 160, 160]",
-                pickable=True,
-            )
-
-            view_state = pdk.ViewState(
-                latitude=mp_parquet["lat"].mean(),
-                longitude=mp_parquet["lon"].mean(),
-                zoom=1,
-            )
-
-            st.pydeck_chart(
-                pdk.Deck(
-                    layers=[layer],
-                    initial_view_state=view_state,
-                    tooltip={
-                        "text": "Microplásticos (log): {log_microplastics}"
-                    },
-                )
-            )
-            with st.expander("Ver tabla de datos"):
-                st.dataframe(
-                    mp_parquet[[
-                        "lat",
-                        "lon",
-                        "microplastics_measurement",
-                        "log_microplastics"
-                    ]].head(200)
-                )
-
-        # TAB 2: Distribución
-        with tab2:
-            st.subheader("Distribución de concentraciones")
-            scale = st.radio(
-                "Escala",
-                ["Lineal", "Logarítmica"],
-                horizontal=True,
-                help=(
-                    "La escala logarítmica se utiliza porque las concentraciones de microplásticos "
-                    "presentan valores extremos. Esta escala permite visualizar mejor "
-                    "la distribución general sin que los valores muy altos dominen el gráfico."
-
-                )
-            )
-            
-            data = mp_parquet["microplastics_measurement"].dropna()
-            if scale == "Logarítmica":
-                data = mp_parquet["log_microplastics"]
-                plot_data = mp_parquet["log_microplastics"]
-                xlabel = "Log(Microplásticos items/m³)"
-            else:
-                plot_data = mp_parquet["microplastics_measurement"]
-                xlabel = "Microplásticos items/m³"
-            
-            fig, ax = plt.subplots()
-            ax.hist(
-                plot_data,
-                bins=40,
-                color="#1f77b4",
-                alpha=0.8
-            )
-            ax.set_xlabel(xlabel)
-            ax.set_ylabel("Frecuencia")
-
-            st.pyplot(fig)
-            plt.close(fig)
-
-
-            with st.expander("¿Cómo interpretar este histograma?"):
-                st.markdown(
-                    """
-                    - La mayoría de las observaciones se concentran en valores bajos.
-                    - Existen valores extremos (hotspots) con concentraciones muy elevadas.
-                    - La escala logarítmica ayuda a visualizar mejor la distribución general.
-                    """
-                )
-
-            st.markdown(
-                f"""
-                - Número de muestras: **{len(mp_parquet["microplastics_measurement"].dropna())}**
-                - Concentración media: **{mp_parquet["microplastics_measurement"].mean():.2f} items/m³**
-                - Concentración mediana: **{mp_parquet["microplastics_measurement"].median():.2f} items/m³**
-                - Percentil 90: **{np.percentile(mp_parquet["microplastics_measurement"].dropna(), 90):.2f} items/m³**
-                """
-            )
-
-        
-            st.dataframe(mp_parquet.head(200))
-
-        # TAB 3: Costa
-        with tab3:
-            st.subheader("Microplásticos y distancia a la costa")
-            
-            st.markdown(
-                "Comparación de concentraciones según la proximidad a la costa."
-            )
-
-            bins = [0, 50, 200, np.inf]
-            labels = ["0-50 km", "51-200 km", ">200 km"]
-
-            mp_parquet = mp_parquet.copy()
-            mp_parquet["coastal_band"] = pd.cut(
-                mp_parquet["distance_to_coast_km"],
-                bins=bins,
-                labels=labels,
-            )
-
-            fig, ax = plt.subplots()
-            
-            mp_parquet.boxplot(
-                column="log_microplastics",
-                by="coastal_band",
-                ax=ax,
-                grid=False,
-                showfliers=True
-            )
-
-            ax.set_xlabel("Distancia a la costa")
-            ax.set_ylabel("Log(Microplásticos items/m³)")
-            ax.set_title("Concentración de microplásticos según distancia a la costa")
-            plt.suptitle("")
-
-            st.pyplot(fig)
-            plt.close(fig)
-
-
-            with st.expander("¿Cómo interpretar este gráfico?"):
-                st.markdown(
-                    """
-                    - Las tres categorías muestran concentraciones bajas en la mayoría de observaciones
-                    - Sin embargo, existen valores extremos en todas las distancias.
-                    - Distribución asimétrica. Hotspots localizados.                   
-                    """
-                )
-
-        # TAB 4: Ambiente
-        with tab4:
-            st.subheader("Microplásticos y variables ambientales")
-
-            st.markdown(
-                "Explora las concentraciones de microplásticos "
-                "en función de las variables ambientales medidas."
-            )
-
-            env_var = st.selectbox(
-                "Selecciona una variable ambiental",
-                FEATURES,
-                index=0
-            )
-
-            fig, ax = plt.subplots()
-
-            ax.scatter(
-                mp_parquet[env_var],
-                mp_parquet["log_microplastics"],
-                alpha=0.5,
-                s=20,
-                color="#1f77b4"
-            )
-            ax.set_xlabel(f"{ENV_VARS_META[env_var]['label']}")
-            ax.set_ylabel("Log(Microplásticos items/m³)")
-            ax.set_title(
-                f"Microplásticos vs {ENV_VARS_META[env_var]['label']}"
-            )
-
-            st.pyplot(fig)
-            plt.close(fig)
-
-
-            with st.expander("¿Cómo interpretar este gráfico?"):
-                st.markdown(
-                    """
-                    - Las concentraciones de microplásticos no están controladas por una única 
-                    variable ambiental. Su distribución refleja la superposición de 
-                    múltiples procesos, fuentes, transporte, mezcla y acumulación, que generan 
-                    patrones complejos y heterogéneos.
-                    """
-                )
-
-        # TAB 5: Clusters
-        with tab5:
-            st.subheader("Microplásticos y perfiles ambientales")
-
-            st.markdown(
-                """
-                Explora las concentraciones de microplásticos
-                según los perfiles ambientales oceánicos definidos.
-                """
-            )
-            
-            fig, ax = plt.subplots()
-
-            # Ordenar clusters para que el gráfico sea estable
-            clusters = sorted(mp_parquet["profile_eco"].dropna().unique())
-
-            ax.boxplot(
-                [
-                    mp_parquet.loc[mp_parquet["profile_eco"] == c, "log_microplastics"]
-                    for c in clusters
-                ],
-                showfliers=True
-            )
-            ax.set_xticklabels(
-                [PROFILE_LABELS.get(c, c) for c in clusters],
-                rotation=30,
-                ha="right"
-            )
-
-            ax.set_xlabel("Perfil ambiental oceánico")
-            ax.set_ylabel("Log(Microplásticos items/m³)")
-            ax.set_title("Concentración de microplásticos según perfil ambiental")
-
-            st.pyplot(fig)
-            plt.close(fig)
-
-
-            with st.expander("¿Cómo interpretar este gráfico?"):
-                st.markdown(
-                    """
-                     - Los clusters agrupan puntos con condiciones ambientales similares.
-                     - Algunos perfiles muestran concentraciones típicas más altas o mayor variabilidad.
-                     - Estas diferencias no implican causalidad directa, sino asociaciones contextuales.
-                    """
-                )
-
-            # Tabla resumen
-            summary = (
-                mp_parquet
-                .groupby("profile_eco")["microplastics_measurement"]
-                .agg(
-                    n_observations="count",
-                    median="median",
-                    mean="mean",
-                )
-                .reset_index()
-            )
-            summary["Perfil ambiental"] = summary["profile_eco"].map(
-                lambda x: PROFILE_LABELS.get(x, x)
-            )
-
-            summary = summary[
-                [
-                    "Perfil ambiental",
-                    "n_observations",
-                    "median",
-                    "mean"
-                ]
-            ]
-            summary = summary.rename(
-                columns={
-                    "n_observations": "N",
-                    "median": "Mediana (items/m³)",
-                    "mean": "Media (items/m³)"
-                }
-            )
-
-
-            with st.expander("Ver resumen por cluster"):
-                st.dataframe(summary)       
-        
-            
-    elif capa == "Índice":
-
-        hazard_gdf = get_hazard_gdf()
-
-        st.header("Análisis del Hazard Index")
-
-        st.markdown(
-            """
-            En esta sección se analiza cómo se comporta el **Hazard Index**, un indicador
-            que resume el riesgo potencial asociado a los microplásticos en el océano.
-
-            El objetivo no es evaluar un punto concreto, sino **entender qué valores son habituales,
-            de qué depende el índice y cómo debe interpretarse**.
-            """
-        )
-
-        # =========================================================
-        # 1. ¿Qué es el Hazard Index?
-        # =========================================================
-
-        st.subheader("¿Qué es el Hazard Index?")
-
-        st.markdown(
-            """
-            El **Hazard Index** es una medida normalizada entre **0 (riesgo bajo)** y
-            **1 (riesgo alto)** que combina:
-
-            - La **cantidad de microplásticos** presentes (presión)
-            - La **composición morfológica** de esos microplásticos
-
-            Permite comparar regiones oceánicas en términos de **riesgo potencial**,
-            pero **no representa un impacto ecológico directo**.
-            """
-        )
-
-        # =========================================================
-        # 2. Distribución global
-        # =========================================================
-
-        st.subheader("¿Qué valores del Hazard Index son habituales?")
-
-        hazard_values = hazard_gdf["hazard_index"].dropna().values
-
-        fig, ax = plt.subplots(figsize=(5, 3))
-        ax.hist(hazard_values, bins=30, alpha=0.75)
-        ax.axvline(np.percentile(hazard_values, 75), linestyle="--", label="Percentil 75")
-        ax.axvline(np.percentile(hazard_values, 90), linestyle=":", label="Percentil 90")
-        ax.set_xlabel("Hazard Index")
-        ax.set_ylabel("Frecuencia")
-        ax.legend()
-
-        st.pyplot(fig)
-        plt.close(fig)
-
-
-        st.markdown(
-            """
-            La mayoría de las regiones oceánicas presentan valores bajos o moderados.
-            Los valores altos son menos frecuentes y representan situaciones más extremas.
-            """
-        )
-
-        # =========================================================
-        # 3. Dependencia con presión y morfología
-        # =========================================================
-
-        st.subheader("¿De qué depende el Hazard Index?")
-
-        col1, col2 = st.columns(2)
-
-        # ---------------------------------------------------------
-        # 3.1 Presión
-        # ---------------------------------------------------------
-
-        with col1:
-            st.markdown("### Relación con la cantidad de microplásticos")
-
-            x = hazard_gdf["hazard_pressure"]
-            y = hazard_gdf["hazard_index"]
-
-            fig, ax = plt.subplots()
-            ax.scatter(x, y, s=10, alpha=0.4)
-
-            # LOWESS
-            smoothed = lowess(y, x, frac=0.3)
-
-            ax.plot(smoothed[:, 0], smoothed[:, 1], color="red", linewidth=2)
-            ax.set_xlabel("Presión por microplásticos (normalizada)")
-            ax.set_ylabel("Hazard Index")
-
-            st.pyplot(fig)
-            plt.close(fig)
-
-
-            st.caption(
-                "A mayor presión por microplásticos, mayor Hazard Index en promedio, "
-                "aunque con variabilidad."
-            )
-
-        # ---------------------------------------------------------
-        # 3.2 Morfología
-        # ---------------------------------------------------------
-
-        with col2:
-            st.markdown("### Influencia de la composición morfológica")
-
-            x = hazard_gdf["hazard_morphology"]
-            y = hazard_gdf["hazard_index"]
-
-            fig, ax = plt.subplots()
-            ax.scatter(x, y, s=10, alpha=0.4, color="darkgreen")
-
-            smoothed = lowess(y, x, frac=0.3)
-            ax.plot(smoothed[:, 0], smoothed[:, 1], color="black", linewidth=2)
-
-            ax.set_xlabel("Composición morfológica (índice)")
-            ax.set_ylabel("Hazard Index")
-
-            st.pyplot(fig)
-            plt.close(fig)
-
-
-            st.caption(
-                "La composición morfológica introduce diferencias claras en el nivel de riesgo, "
-                "incluso con cantidades similares de microplásticos."
-            )
-
-        # =========================================================
-        # 4. BLOQUE INTERACTIVO — MORFOLOGÍA (CON PESOS EXPLÍCITOS)
-        # =========================================================
-
-        st.subheader("🧩 ¿Cómo influye la composición de formas?")
-
-        st.markdown(
-            """
-            La **composición morfológica** depende de la proporción relativa
-            de distintas formas de microplásticos.
-
-            No todas las formas contribuyen por igual al riesgo potencial:
-            algunas tienen **mayor peso** que otras.
-            """
-        )
-
-        col1, col2 = st.columns(2)
-
-        # -------------------------------
-        # Sliders (suma automática = 100)
-        # -------------------------------
-        with col1:
-            fibers = st.slider("Fibras", 0, 100, 40)
-            fragments = st.slider("Fragmentos", 0, 100 - fibers, 30)
-            spheres = st.slider(
-                "Esferas",
-                0,
-                100 - fibers - fragments,
-                20
-            )
-
-        others = 100 - (fibers + fragments + spheres)
-
-        proportions = {
-            "fibers": fibers / 100,
-            "fragments": fragments / 100,
-            "spheres": spheres / 100,
-            "others": others / 100,
-        }
-
-        # -------------------------------
-        # Índice morfológico
-        # -------------------------------
-        hazard_morph_user = compute_hazard_morphology_from_props(proportions)
-
-        # -------------------------------
-        # Contribución ponderada
-        # -------------------------------
-        weighted_contrib = {
-            k: proportions[k] * WEIGHTS[k]
-            for k in proportions
-        }
-
-        with col2:
-            st.metric(
-                "Índice morfológico resultante",
-                f"{hazard_morph_user:.2f}"
-            )
-
-            fig, ax = plt.subplots(figsize=(4, 3))
-            ax.bar(
-                weighted_contrib.keys(),
-                weighted_contrib.values(),
-                color=["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
-            )
-            ax.set_ylabel("Contribución al riesgo morfológico")
-            ax.set_ylim(0, 1)
-            ax.set_title("Contribución ponderada por forma")
-
-            st.pyplot(fig)
-            plt.close(fig)
-
-
-        # -------------------------------
-        # Texto explicativo NO TÉCNICO
-        # -------------------------------
-
-        st.markdown(
-            """
-            **¿Por qué algunas barras llegan más alto que otras?**
-
-            Aunque dos formas estén presentes en la misma proporción,
-            **no contribuyen igual al riesgo potencial**.
-
-            - Las **fibras** tienen el mayor peso relativo, por lo que
-            su contribución puede alcanzar valores cercanos al **100%**
-            del riesgo morfológico.
-            - Los **fragmentos** tienen un peso intermedio, por lo que su
-            contribución máxima es menor (alrededor del **60–70%**).
-            - Las **esferas** y otros tipos tienen pesos más bajos y,
-            por tanto, su contribución al riesgo es menor, incluso si
-            están presentes en cantidades similares.
-
-            Este enfoque permite reflejar que **no todas las formas de
-            microplásticos tienen el mismo potencial de riesgo**.
-            """
-        )
-
-        st.info(
-            "Este análisis muestra únicamente el **componente morfológico del riesgo**. "
-            "El Hazard Index completo combina este componente con la cantidad total "
-            "de microplásticos presente."
-        )
-
-
-        # =========================================================
-        # 5. CONTRIBUCIÓN RELATIVA (GRÁFICO REAL)
-        # =========================================================
-
-        st.subheader("⚖️ Contribución relativa de presión y morfología")
-
-        st.markdown(
-            """
-            El Hazard Index surge de la combinación de **presión por microplásticos**
-            y **composición morfológica**.
-
-            Las curvas siguientes muestran cómo varía el Hazard Index observado
-            cuando cambia cada componente.
-            """
-        )
-
-        fig, ax = plt.subplots(figsize=(5, 3))
-
-        sm_p = lowess(
-            hazard_gdf["hazard_index"],
-            hazard_gdf["hazard_pressure"],
-            frac=0.3
-        )
-        sm_m = lowess(
-            hazard_gdf["hazard_index"],
-            hazard_gdf["hazard_morphology"],
-            frac=0.3
-        )
-
-        ax.plot(sm_p[:, 0], sm_p[:, 1], label="Variación con la presión", linewidth=2)
-        ax.plot(sm_m[:, 0], sm_m[:, 1], label="Variación con la morfología", linewidth=2)
-
-        ax.set_xlabel("Componente del índice (escala propia)")
-        ax.set_ylabel("Hazard Index")
-        ax.legend()
-
-        st.pyplot(fig)
-        plt.close(fig)
-
-
-        st.caption(
-            "Ambos factores contribuyen al riesgo potencial, de forma complementaria."
-        )
-        # =========================================================
-        # 6. CALCULADORA INTERACTIVA DEL HAZARD INDEX
-        # =========================================================
-
-        st.subheader("🧮 Calculadora del Hazard Index")
-
-        st.markdown(
-            """
-            En este apartado puedes **explorar cómo se obtiene un valor del Hazard Index**
-            a partir de sus dos componentes principales:
-
-            - **Presión por microplásticos** (cantidad)
-            - **Composición morfológica** (tipo de microplásticos)
-
-            El valor calculado se compara con los valores **realmente observados**
-            en el océano.
-            """
-        )
-
-        # ---------------------------------------------------------
-        # Input: presión por microplásticos
-        # ---------------------------------------------------------
-
-        st.markdown("### 1️⃣ Presión por microplásticos")
-
-        # Usamos el rango observado real
-        p_min = hazard_gdf["hazard_pressure"].min()
-        p_max = hazard_gdf["hazard_pressure"].max()
-
-        hazard_pressure_user = st.slider(
-            "Nivel de presión por microplásticos (normalizado)",
-            min_value=float(p_min),
-            max_value=float(p_max),
-            value=float(np.median(hazard_gdf["hazard_pressure"])),
-            step=0.01,
-        )
-
-        st.caption(
-            "Este valor representa la cantidad relativa de microplásticos, "
-            "normalizada a partir de observaciones reales."
-        )
-
-        # ---------------------------------------------------------
-        # Input: morfología (ya calculada antes)
-        # ---------------------------------------------------------
-
-        st.markdown("### 2️⃣ Composición morfológica")
-
-        st.write(
-            f"Índice presión morfológico seleccionado: **{hazard_morph_user:.2f}**"
-        )
-
-        # ---------------------------------------------------------
-        # Cálculo del Hazard Index
-        # ---------------------------------------------------------
-
-        # ⚠️ IMPORTANTE:
-        # Usamos la misma función lógica que en la construcción del índice.
-        # Aquí asumimos combinación multiplicativa normalizada.
-        hazard_morph_user = float(hazard_morph_user)
-        hazard_pressure_user = float(hazard_pressure_user)
-
-        hazard_index_user = (
-            0.5 * hazard_pressure_user
-            + 0.5 * hazard_morph_user
-        )
-
-        # ---------------------------------------------------------
-        # Interpretación
-        # ---------------------------------------------------------
-
-        st.markdown("### 📊 Resultado")
-
-        # Percentil respecto a valores observados
-        hazard_dist = hazard_gdf["hazard_index"].dropna().values
-        percentile = (hazard_dist < hazard_index_user).mean() * 100
-
-        st.metric(
-            label="Hazard Index estimado",
-            value=f"{hazard_index_user:.2f}",
-        )
-
-        # Clasificación semántica (coherente con Jenks)
-        if hazard_index_user <= np.percentile(hazard_dist, 33):
-            label = "Bajo"
-            color = "green"
-        elif hazard_index_user <= np.percentile(hazard_dist, 66):
-            label = "Medio"
-            color = "orange"
-        else:
-            label = "Alto"
-            color = "red"
-
-        st.markdown(
-            f"""
-            **Nivel estimado:**  
-            <span style="color:{color}; font-weight:600;">{label}</span>
-            """,
-            unsafe_allow_html=True
-        )
-
-        st.markdown(
-            f"""
-            Este valor se sitúa aproximadamente en el **percentil {percentile:.1f}**
-            del Hazard Index observado en el océano.
-            """
-        )
-
-        # ---------------------------------------------------------
-        # Nota explicativa final
-        # ---------------------------------------------------------
-
-        st.info(
-            """
-            Este resultado es **explicativo**, no predictivo.
-
-            Muestra cómo la combinación de presión y composición morfológica
-            se traduce en un valor del Hazard Index, utilizando la misma lógica
-            empleada en su construcción original.
-            """
-        )
-
-        del hazard_gdf
-        import gc
-        gc.collect()
-
-
-    ###############################################
-
-    elif capa == "Ecología":
-
-        hazard_gdf = get_hazard_gdf()
-
-        st.header("Implicaciones ecológicas potenciales")
-
-        st.markdown(
-            """
-            En esta sección se exploran **implicaciones ecológicas potenciales**
-            bajo distintos **escenarios ambientales y de presión por microplásticos**.
-
-            El usuario define un escenario y el sistema estima dos indicadores
-            ecológicos complementarios.
-            """
-        )
-
-        # =========================================================
-        # DEFINICIÓN DEL ESCENARIO ECOLÓGICO
-        # =========================================================
-
-        st.subheader("🔧 Definir escenario ecológico")
-
-        col1, col2 = st.columns(2)
-
-        # ---------------------------------------------------------
-        # Presión por microplásticos (para mean_risk)
-        # ---------------------------------------------------------
-        with col1:
-            mp_dist = hazard_gdf["mp_pieces_m3"].dropna().values
-
-            mp_percentile = st.slider(
-                "Presión relativa por microplásticos",
-                min_value=1,
-                max_value=99,
-                value=50,
-                step=1,
-                help="Percentil observado de concentración de microplásticos"
-            )
-
-            mp_real = float(np.percentile(mp_dist, mp_percentile))
-
-        # ---------------------------------------------------------
-        # Hazard Index (para species_count)
-        # ---------------------------------------------------------
-        with col2:
-            hazard_values = hazard_gdf["hazard_index"].dropna().values
-
-            hazard_index = st.slider(
-                "Hazard Index",
-                min_value=float(hazard_values.min()),
-                max_value=float(hazard_values.max()),
-                value=float(np.median(hazard_values)),
-                step=0.01,
-                help="Índice sintético de riesgo por microplásticos"
-            )
-
-        # ---------------------------------------------------------
-        # Contexto ecológico (tamaño del microplástico y complejidad)
-        # ---------------------------------------------------------
-
-        col3, col4 = st.columns(2)
-
-        with col3:
-            eco_size_label = st.selectbox(
-                "Tamaño relativo de los microplásticos",
-                ["0–57 µm", "58–147 µm", "148–464 µm"],
-                index=1,
-                help="Rangos basados en percentiles observados"
-            )
-
-            ECO_SIZE_MAP = {
-                "0–57 µm": 53,
-                "58–147 µm": 147,
-                "148–464 µm": 464,
-            }
-
-            eco_count = ECO_SIZE_MAP[eco_size_label]
-
-        with col4:
-            eco_shape_richness = st.slider(
-                "Diversidad morfológica de microplásticos",
-                min_value=2,
-                max_value=4,
-                value=3,
-                help="Número de formas distintas presentes"
-            )
-
-        # =========================================================
-        # MORFOLOGÍA — PROPORCIONES (suma automática = 100)
-        # =========================================================
-
-        st.subheader("🧩 Composición morfológica de los microplásticos")
-
-        col_left, col_right = st.columns([2, 1])  # sliders más espacio que el gráfico
-
-        with col_left:
-
-            fibers = st.slider("Fibras", 0, 100, 40)
-            fragments = st.slider("Fragmentos", 0, 100 - fibers, 30)
-            spheres = st.slider(
-                "Esferas",
-                0,
-                100 - fibers - fragments,
-                20
-            )
-
-            others = 100 - (fibers + fragments + spheres)
-
-            proportions = {
-                "fibers": fibers / 100,
-                "fragments": fragments / 100,
-                "spheres": spheres / 100,
-                "others": others / 100,
-            }
-
-            st.caption(
-                f"Otros se ajusta automáticamente: **{others}%**"
-            )
-
-        # -------------------------------------------------
-        # Contribución ponderada (con pesos)
-        # -------------------------------------------------
-
-        weighted_morphology = {
-            k: proportions[k] * WEIGHTS[k]
-            for k in proportions
-        }
-
-        with col_right:
-            fig, ax = plt.subplots(figsize=(3, 2))
-            ax.bar(
-                weighted_morphology.keys(),
-                weighted_morphology.values(),
-                color=["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
-            )
-            ax.set_ylim(0, 1)
-            ax.set_title("Contribución por forma", fontsize=10)
-            ax.tick_params(axis="x", labelsize=8)
-            ax.tick_params(axis="y", labelsize=8)
-
-            st.pyplot(fig, use_container_width=False)
-            plt.close(fig)
-
-
-
-        st.caption(
-            "La contribución depende tanto de la proporción como del peso asignado "
-            "a cada forma. No todas las morfologías tienen el mismo potencial de riesgo."
-        )
-
-        # =========================================================
-        # VARIABLES FIJAS (baseline)
-        # =========================================================
-
-        eco_mean_size = 0
-        eco_small_ratio = 0
-        log_dist_m = 0
-        eco_dist_m = 0
-
-        # =========================================================
-        # RESULTADOS ECOLÓGICOS
-        # =========================================================
-
-        st.subheader("🌱 Resultados ecológicos esperados")
-
-        col7, col8 = st.columns(2)
-
-        # ---------------------------------------------------------
-        # 🅰️ Riesgo ecológico medio (modelo RAW)
-        # ---------------------------------------------------------
-        with col7:
-            eco_result_risk = predict_ecological_impact_index(
-                hazard_index=hazard_index,
-                mp_real=mp_real,
-                morphology=proportions,
-                eco_count=eco_count,
-                eco_shape_richness=eco_shape_richness,
-                eco_mean_size=eco_mean_size,
-                eco_small_ratio=eco_small_ratio,
-                log_dist_m=log_dist_m,
-                eco_dist_m=eco_dist_m,
-            )
-
-            st.metric(
-                "Riesgo ecológico medio esperado",
-                f"{eco_result_risk['iucn_mean_risk']:.2f} / 4"
-            )
-
-            st.caption(
-                "Este indicador responde principalmente a la presión por microplásticos "
-                "y a su composición."
-            )
-
-        # ---------------------------------------------------------
-        # 🅱️ Especies vulnerables (modelo INDEX)
-        # ---------------------------------------------------------
-        with col8:
-            eco_result_species = predict_ecological_impact_index(
-                hazard_index=hazard_index,
-                eco_count=eco_count,
-                eco_shape_richness=eco_shape_richness,
-                eco_mean_size=eco_mean_size,
-                eco_small_ratio=eco_small_ratio,
-                log_dist_m=log_dist_m,
-                eco_dist_m=eco_dist_m,
-            )
-
-            st.metric(
-                "Especies vulnerables potencialmente afectadas",
-                f"{eco_result_species['species_count']:.1f}"
-            )
-
-            st.caption(
-                "Este indicador depende del nivel global de Hazard Index "
-                "y del contexto ecológico."
-            )
-
-        # =========================================================
-        # EXPLICACIÓN FINAL (NO TÉCNICA)
-        # =========================================================
-
-        st.info(
-            """
-            **Cómo interpretar estos resultados**
-
-            • El **riesgo ecológico medio** refleja la intensidad potencial del impacto,
-            y responde principalmente a la **cantidad y tipo de microplásticos**.
-
-            • El número de **especies vulnerables** se asocia al **nivel global de hazard**
-            y a patrones ecológicos observados.
-
-            Ambos indicadores representan **dimensiones complementarias**
-            del impacto ecológico potencial.
-            """
-        )
-
-
-        # =========================================================
-        # CONTEXTUALIZACIÓN GLOBAL DEL RIESGO
-        # =========================================================
-
-        st.subheader("📊 Contextualización global del riesgo")
-
-        risk_dist = hazard_gdf["iucn_mean_risk"].dropna().values
-        risk_value = eco_result_risk["iucn_mean_risk"]
-
-        percentile = (risk_dist < risk_value).mean() * 100
-
-        fig, ax = plt.subplots(figsize=(2.8, 1.9))
-
-        ax.hist(
-            risk_dist,
-            bins=22,
-            alpha=0.75,
-            color="#b0c4de"
-        )
-        ax.axvline(
-            risk_value,
-            color="red",
-            linewidth=1.2
-        )
-
-        ax.set_xlabel("Riesgo ecológico medio", fontsize=8)
-        ax.set_ylabel("Frecuencia", fontsize=8)
-        ax.tick_params(axis="both", labelsize=7)
-
-        st.pyplot(fig, use_container_width=False)
-        plt.close(fig)
-
-
-        st.markdown(
-            f"""
-            Este valor se sitúa aproximadamente en el
-            **percentil {percentile:.1f}** del riesgo ecológico observado
-            a escala global.
-            """
-        )
-
-        st.caption(
-            "Distribución basada en celdas con información ecológica observada."
-        )
-
-        # =========================================================
-        # COHERENCIA ECOLÓGICA OBSERVADA (MODELO A)
-        # =========================================================
-        st.subheader(("🧩 COHERENCIA ECOLÓGICA OBSERVADA"))
-
-        st.markdown("¿Es habitual observar hazard alto en este contexto ecológico?")
-
-        st.markdown(
-            """
-            Este bloque evalúa si, **dado un contexto ecológico concreto**,
-            es habitual observar **niveles elevados de presión por microplásticos**.
-
-            El resultado se basa en **patrones observados a escala global**
-            y **no implica causalidad directa**.
-            """
-        )
-
-        # ---------------------------------------------------------
-        # INPUTS ECOLÓGICOS DEL MODELO
-        # ---------------------------------------------------------
-
-        col_left, col_right = st.columns([2, 1])
-
-        with col_left:
-            eco_shape_richness = st.slider(
-                "Diversidad morfológica de microplásticos",
-                min_value=2,
-                max_value=4,
-                value=eco_shape_richness,
-                help="Número de formas distintas de microplásticos presentes"
-            )
-
-            vuln_level = st.slider(
-                "Nivel de amenaza (IUCN Red List)",  
-                min_value=1,
-                max_value=4,
-                value=2,
-                step=1,
-                help="Nivel de amenaza de las especies presentes"
-            )
-            # 🔑 Traducción ecológica coherente
-            ecotaxa_present = 1 if vuln_level >= 1 else 0
-            
-        with col_right:
-            vuln_table = pd.DataFrame({
-                "Código": [4, 3, 2, 1],
-                "Categoría IUCN": [
-                    "CR – Critically Endangered",
-                    "EN – Endangered",
-                    "VU – Vulnerable",
-                    "NT – Near Threatened"
-                ]
-            })
-
-            st.markdown("**Equivalencia IUCN**")
-            st.table(vuln_table)
-
-        # ---------------------------------------------------------
-        # CONSTRUCCIÓN DE FEATURES (MODELO A)
-        # ---------------------------------------------------------
-
-        hazard_prob = predict_hazard_coherence(
-            eco_shape_richness=eco_shape_richness,
-            ecotaxa_present=ecotaxa_present,
-            vuln=vuln_level,
-        )
-
-        # ---------------------------------------------------------
-        # OUTPUT
-        # ---------------------------------------------------------
-
-        st.metric(
-            "Probabilidad de observar hazard elevado",
-            f"{hazard_prob:.2f}"
-        )
-
-        st.caption(
-            """
-            Esta probabilidad refleja **patrones de co-ocurrencia observados**
-            entre contexto ecológico y presión por microplásticos.
-
-            No representa un efecto causal ni una predicción de impacto ecológico.
-            """
-        )
-
-        st.info(
-            """
-            Una probabilidad baja no implica ausencia de riesgo ecológico.
-
-            Indica que, en los datos observados, los contextos ecológicos
-            más diversos y con especies amenazadas **no suelen coincidir**
-            con niveles elevados de presión por microplásticos.
-
-            Este bloque evalúa **co-ocurrencia observada**, no impacto potencial.
-            """
-        )
-
-        # =========================================================
-        # BLOQUE FINAL — PROYECCIÓN ECOLÓGICA GLOBAL
-        # =========================================================
-
-        st.subheader("🌍 Proyección ecológica global")
-
-        st.markdown(
-            """
-            Este bloque muestra una **proyección espacial global** de las implicaciones
-            ecológicas potenciales asociadas a la presión por microplásticos.
-
-            A diferencia de los bloques anteriores, aquí no se exploran escenarios
-            hipotéticos, sino patrones espaciales aprendidos a partir de
-            **condiciones ambientales reales**.
-            """
-        )
-
-        # =========================================================
-        # CARGA DEL DATASET GLOBAL (SOLO PARA CONSULTAS LOCALES)
-        # =========================================================
-
-        gdf_global = get_global_ecology_gdf()
-
-        # Asegurar CRS geográfico (solo por seguridad)
-        if gdf_global.crs.to_epsg() != 4326:
-            gdf_global = gdf_global.to_crs(epsg=4326)
-
-        # Precalcular centroides una sola vez (rendimiento)
-        if "geometry_point" not in gdf_global.columns:
-            gdf_global["geometry_point"] = gdf_global.geometry.centroid
-
-        with open("./data/Predicciones/pred_iucn_mean_risk_bounds.json") as f:
-            bounds = json.load(f)
-
-        south, west, north, east = (
-            bounds["south"],
-            bounds["west"],
-            bounds["north"],
-            bounds["east"],
-        )
-
-        # =========================================================
-        # SELECTOR DE VARIABLE MOSTRADA
-        # =========================================================
-
-        st.markdown("### 🎨 Variable mostrada en el mapa")
-
-        color_var_label = st.radio(
-            "",
-            [
-                "Riesgo ecológico medio (IUCN)",
-                "Especies vulnerables (escala logarítmica)"
-            ],
-            horizontal=True
-        )
-
-        if color_var_label == "Riesgo ecológico medio (IUCN)":
-            raster_path = "./data/Predicciones/pred_iucn_mean_risk.png"
-            raster_label = "Riesgo ecológico medio proyectado (IUCN)"
-        else:
-            raster_path = "./data/Predicciones/pred_log_iucn_species_count.png"
-            raster_label = "Especies vulnerables potencialmente afectadas (log)"
-
-        # =========================================================
-        # LEER BOUNDS DESDE EL GEOTIFF (PARA POSICIONAR EL PNG)
-        # =========================================================
-        
-        if color_var_label == "Riesgo ecológico medio (IUCN)":
-            bounds_path = "./data/Predicciones/pred_iucn_mean_risk_bounds.json"
-        else:
-            bounds_path = "./data/Predicciones/pred_log_iucn_species_count_bounds.json"
-
-        with open(bounds_path) as f:
-            bounds = json.load(f)
-
-        south = bounds["south"]
-        west  = bounds["west"]
-        north = bounds["north"]
-        east  = bounds["east"]
-
-
-        # =========================================================
-        # CONSTRUCCIÓN DEL MAPA (PNG PRECOMPUTADO)
-        # =========================================================
-
-        m = folium.Map(
-            location=[0, 0],
-            zoom_start=2,
-            tiles="CartoDB voyager"
-        )
-
-        ImageOverlay(
-            image=raster_path,
-            bounds=[
-                [south, west],
-                [north, east]
-            ],
-            opacity=0.9,
-            interactive=False,
-            cross_origin=False,
-            zindex=1
-        ).add_to(m)
-        
-        # =========================================================
-        # RENDER DEL MAPA
-        # =========================================================
-
-        map_data = st_folium(
-            m,
-            width=900,
-            height=520,
-        )
-
-        # =========================================================
-        # GESTIÓN DEL CLICK
-        # =========================================================
-
-        if map_data and map_data.get("last_clicked"):
-            new_click = {
-                "lat": map_data["last_clicked"]["lat"],
-                "lng": map_data["last_clicked"]["lng"]
-            }
-
-            if st.session_state.get("global_click") != new_click:
-                st.session_state.global_click = new_click
-                st.rerun()
-
-        # =========================================================
-        # OUTPUT LOCAL + TABLA AMBIENTAL
-        # =========================================================
-
-        if "global_click" in st.session_state:
-
-            lat = st.session_state.global_click["lat"]
-            lng = st.session_state.global_click["lng"]
-
-            st.markdown("### 📍 Resultado local")
-
-            # -----------------------------------------------------
-            # CONTEXTO DESDE gdf_global (YA LIMPIO DE TIERRA)
-            # -----------------------------------------------------
-
-            point = Point(lng, lat)
-
-            distances = gdf_global["geometry_point"].distance(point)
-            idx = distances.idxmin()
-            row = gdf_global.loc[idx]
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.metric(
-                    "Riesgo ecológico medio proyectado",
-                    f"{row['pred_iucn_mean_risk']:.2f} / 4"
-                )
-
-            with col2:
-                st.metric(
-                    "Especies vulnerables potencialmente afectadas",
-                    f"{row['pred_iucn_species_count']:.1f}"
-                )
-
-            # -----------------------------------------------------
-            # CONTEXTUALIZACIÓN GLOBAL
-            # -----------------------------------------------------
-
-            risk_dist = gdf_global["pred_iucn_mean_risk"].values
-            percentile = (risk_dist < row["pred_iucn_mean_risk"]).mean() * 100
-
-            st.markdown(
-                f"""
-                Este valor se sitúa aproximadamente en el
-                **percentil {percentile:.1f}** del riesgo ecológico proyectado
-                a escala global.
-                """
-            )
-
-            # -----------------------------------------------------
-            # TABLA DE VARIABLES AMBIENTALES
-            # -----------------------------------------------------
-
-            st.markdown("### 🌊 Contexto ambiental local")
-
-            env_table = []
-
-            for k in FEATURES:
-                if k in row and k in gdf_global.columns:
-                    env_table.append({
-                        "Variable": ENV_VARS_META.get(k, {}).get("label", k),
-                        "Valor local": round(float(row[k]), 3),
-                        "Promedio global": round(float(gdf_global[k].mean()), 3),
-                        "Unidad": ENV_VARS_META.get(k, {}).get("unit", "-"),
-                    })
-
-            env_df = pd.DataFrame(env_table)
-
-            st.dataframe(
-                env_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.caption(
-                "La tabla muestra las condiciones ambientales en el punto seleccionado "
-                "comparadas con el promedio global oceánico."
-            )
-
-        # =========================================================
-        # AVISO FINAL
-        # =========================================================
-
-        st.info(
-            """
-            Esta proyección no representa observaciones directas ni impactos causales.
-
-            Muestra patrones espaciales esperables bajo condiciones ambientales
-            similares, aprendidos a partir de datos globales.
-            """
-        )
 
 
 
